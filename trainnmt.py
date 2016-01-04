@@ -9,7 +9,7 @@ import cPickle
 import argparse
 
 from trainer import trainer
-from nmt import nmtmodel, decoder
+from rnnsearch import rnnsearch, decoder
 from utils import batchstream, tokenize, shuffle, numberize, normalize
 
 # load vocabulary from file
@@ -41,7 +41,7 @@ def loadmodel(name):
     fd = open(name, 'r')
     option = cPickle.load(fd)
     params = cPickle.load(fd)
-    model = nmtmodel(**option)
+    model = rnnsearch(**option)
 
     for val, param in zip(params, model.parameter):
         param.set_value(val)
@@ -61,8 +61,8 @@ def uniform(params, lower, upper):
 def processdata(data, voc):
     xdata, ydata = data
     xvocab, yvocab = voc
-    xdata = [tokenize(item) + ['</s>'] for item in xdata]
-    ydata = [tokenize(item) + ['</s>'] for item in ydata]
+    xdata = [tokenize(item) + ['<eos>'] for item in xdata]
+    ydata = [tokenize(item) + ['<eos>'] for item in ydata]
     xdata = numberize(xdata, xvocab)
     ydata = numberize(ydata, yvocab)
     xdata, xmask = normalize(xdata)
@@ -71,7 +71,7 @@ def processdata(data, voc):
     return xdata, xmask, ydata, ymask
 
 def parseargs(args = None):
-    desc = 'training nmt model'
+    desc = 'training rnnsearch'
     parser = argparse.ArgumentParser(description = desc)
 
     # training corpus
@@ -90,9 +90,15 @@ def parseargs(args = None):
     # hidden size
     desc = 'source, target and alignment hidden size'
     parser.add_argument('--hidden', nargs = 3, type = int, help = desc)
+    # maxout dim
+    desc = 'maxout hidden dimension'
+    parser.add_argument('--maxhid', default = 500, type = int, help = desc)
+    # maxout number
+    desc = 'maxout number'
+    parser.add_argument('--maxpart', default = 2, type = int, help = desc)
     # deepout dim
     desc = 'deepout hidden dimension'
-    parser.add_argument('--deephid', default = 500, type = int, help = desc)
+    parser.add_argument('--deephid', default = 620, type = int, help = desc)
 
     # epoch
     desc = 'maximum training epoch'
@@ -106,6 +112,12 @@ def parseargs(args = None):
     # batch
     desc = 'batch size'
     parser.add_argument('--batch', type = int, default = 128, help = desc)
+    # training algorhtm
+    desc = 'optimizer'
+    parser.add_argument('--optimizer', type = str, help = desc)
+    # gradient renormalization
+    desc = 'gradient renormalization'
+    parser.add_argument('--norm', type = int, default = 1.0, help = desc)
 
     return parser.parse_args(args)
 
@@ -113,7 +125,9 @@ def getoption():
     option = {}
 
     option['embdim'] = [620, 620]
-    option['hidden'] = [1000, 1000, 2000]
+    option['hidden'] = [1000, 1000, 1000]
+    option['maxpart'] = 2
+    option['maxhid'] = 500
     option['deephid'] = 620
 
     option['cost'] = 0
@@ -122,6 +136,8 @@ def getoption():
     option['maxepoch'] = 10
     option['alpha'] = 1e-4
     option['batch'] = 128
+    option['optimizer'] = 'rmsprop'
+    option['variant'] = 'graves'
 
     return option
 
@@ -137,12 +153,25 @@ def override(option, args):
     isvocab = invertvoc(svocab)
     itvocab = invertvoc(tvocab)
 
+    option['source_eos_id'] = len(isvocab)
+    option['target_eos_id'] = len(itvocab)
+
+    svocab['<eos>'] = option['source_eos_id']
+    tvocab['<eos>'] = option['target_eos_id']
+    isvocab[option['source_eos_id']] = '<eos>'
+    itvocab[option['target_eos_id']] = '<eos>'
+
     if args.embdim != None:
         option['embdim'] = args.embdim
 
     if args.hidden != None:
         option['hidden'] = args.hidden
 
+    if args.optimizer != None:
+        option['optimizer'] = args.optimizer
+
+    option['maxhid'] = args.maxhid
+    option['maxpart'] = args.maxpart
     option['deephid'] = args.deephid
 
     option['corpus'] = [scorpus, tcorpus]
@@ -151,6 +180,7 @@ def override(option, args):
     option['maxepoch'] = args.maxepoch
     option['momentum'] = args.momentum
     option['batch'] = args.batch
+    option['norm'] = args.norm
 
 def skipstream(stream, count):
     for i in range(count):
@@ -186,14 +216,14 @@ if __name__ == '__main__':
     maxepoch = option['maxepoch']
 
     if init:
-        model = nmtmodel(**option)
-        uniform(model.parameter, -0.08, 0.08)
+        model = rnnsearch(**option)
+        uniform(model.parameter, -0.01, 0.01)
 
-    mdecoder = decoder(model, 10, -1.0)
+    mdecoder = decoder(model, size = 10, threshold = -1.0)
     toption = {}
-    toption['algorithm'] = 'adadelta'
-    toption['variant'] = 'graves'
-    toption['constraint'] = ('norm', 1.0)
+    toption['algorithm'] = option['optimizer']
+    toption['variant'] = option['variant']
+    toption['constraint'] = ('norm', option['norm'])
     toption['norm'] = True
     modeltrainer = trainer(model, **toption)
     alpha = option['alpha']
@@ -212,7 +242,7 @@ if __name__ == '__main__':
             option['count'] += 1
             count = option['count']
 
-            cost = cost * ydata.shape[1] / ymask.sum()
+            cost = cost / ymask.sum()
             totcost += cost
             print i + 1, count, cost, norm, t2 - t1
 
@@ -228,8 +258,7 @@ if __name__ == '__main__':
                 sdata = data[0][ind]
                 tdata = data[1][ind]
                 xdata = xdata[:, ind:ind + 1]
-                xmask = xmask[:, ind:ind + 1]
-                hls = mdecoder.decode(xdata, xmask)
+                hls = mdecoder.decode(xdata)
                 if len(hls) > 0:
                     best = hls[0]
                     print sdata
@@ -245,8 +274,8 @@ if __name__ == '__main__':
         print '--------------------------------------------------'
 
         # early stopping
-        if i >= 4:
-            alpha = alpha / 2
+        #if i >= 4:
+        #    alpha = alpha / 2
 
         stream.reset()
         option['epoch'] = i + 1

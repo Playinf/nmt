@@ -7,29 +7,15 @@ import time
 import cPickle
 import argparse
 
-from nmt import nmtmodel, decoder
+from rnnsearch import rnnsearch, decoder
 from utils import tokenize, numberize, normalize
-
-# load vocabulary from file
-def loadvocab(file):
-    fd = open(file, 'r')
-    vocab = cPickle.load(fd)
-    fd.close()
-    return vocab
-
-def invertvoc(vocab):
-    v = {}
-    for k, idx in vocab.iteritems():
-        v[idx] = k
-
-    return v
 
 # load model from file
 def loadmodel(name):
     fd = open(name, 'r')
     option = cPickle.load(fd)
     params = cPickle.load(fd)
-    model = nmtmodel(**option)
+    model = rnnsearch(**option)
 
     for val, param in zip(params, model.parameter):
         param.set_value(val)
@@ -39,11 +25,11 @@ def loadmodel(name):
     return model
 
 def processdata(data, voc):
-    data = [tokenize(item) + ['</s>'] for item in data]
+    data = [tokenize(item) + ['<eos>'] for item in data]
     data = numberize(data, voc)
-    data, mask = normalize(data)
+    data = normalize(data)
 
-    return data, mask
+    return data[0]
 
 def parseargs(args = None):
     desc = 'translate using exsiting nmt model'
@@ -58,17 +44,31 @@ def parseargs(args = None):
     # threshold
     desc = 'beam search threshold'
     parser.add_argument('--threshold', type = float, help = desc)
+    # max length
+    desc = 'max translation length'
+    parser.add_argument('--maxlen', type = int, help = desc)
+    # min length
+    desc = 'min translation length'
+    parser.add_argument('--minlen', type = int, help = desc)
 
     return parser.parse_args(args)
 
 if __name__ == '__main__':
-    args = parseargs()
+    cmd = '--model search_model.converted.pkl --beam-size 10'.split()
+    args = parseargs(cmd)
 
     if args.threshold == None:
         args.threshold = -1.0
 
     model = loadmodel(args.model)
-    mdecoder = decoder(model, args.beam_size, args.threshold)
+
+    option = {}
+    option['size'] = args.beam_size
+    option['threshold'] = args.threshold
+    option['maxlen'] = args.maxlen
+    option['minlen'] = args.minlen
+    mdecoder = decoder(model, **option)
+
     option = model.option
 
     svocabs, tvocabs = option['vocabulary']
@@ -77,16 +77,20 @@ if __name__ == '__main__':
 
     count = 0
 
+    #fd = open('/home/playinf/Workspace/data/dev-test/sjs/u8_nist02_src.token.plain')
+    fd = open('debug.txt')
+
     while True:
-        line = sys.stdin.readline()
+        #line = sys.stdin.readline()
+        line = fd.readline()
 
         if line == '':
             break
 
         data = [line]
-        xdata, xmask = processdata(data, svocab)
+        sentence = processdata(data, svocab)
         t1 = time.time()
-        hlist = mdecoder.decode(xdata, xmask)
+        hlist = mdecoder.decode(sentence)
         t2 = time.time()
 
         if len(hlist) == 0:
