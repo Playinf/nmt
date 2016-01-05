@@ -21,31 +21,31 @@ class decoder:
         self.vocabulary = model.vocabulary
 
     # based on groundhog's impelmentation
-    def decode(self, seq, size = None):
+    def decode(self, seq, minlen = None, maxlen = None, size = None):
         beamsize = self.size
         threshold = self.threshold
-        size = self.size if size == None else size
-        option = self.option
+        size = beamsize if size == None else size
         encode, compute_prob, compute_state = self.sample
         vocab = self.vocabulary[1][1]
         eosid = self.vocabulary[1][0]['<eos>']
 
-        if 'minlen' not in option or option['minlen'] == None:
-            option['minlen'] = len(seq) / 2
+        if maxlen == None:
+            maxlen = len(seq) * 3
 
-        minlen = option['minlen']
+        if minlen == None:
+            minlen = len(seq) / 2
 
         anno, manno, state = encode(seq)
 
         dim = state.shape[1]
-        states= state
+        states = state
 
         trans = [[]]
         costs = [0.0]
         final_trans = []
         final_costs = []
 
-        for k in range(3 * len(seq)):
+        for k in range(maxlen):
             if size == 0:
                 break
 
@@ -118,9 +118,6 @@ class decoder:
                 hypo.score = -cost / count
             hypo.translation = map(lambda x: vocab[x], trans)
             final_beam.insert(hypo)
-
-        #final_trans = numpy.array(final_trans)[numpy.argsort(final_costs)]
-        #final_costs = numpy.array(sorted(final_costs))
 
         return final_beam.sort()
 
@@ -260,10 +257,10 @@ class rnnsearch:
         annotation_transform = linear(2 * shdim, ahdim, bias = False)
         state_transform = linear(thdim, ahdim, bias = False)
         context_transform = linear(ahdim, 1, bias = False)
+        decoder = gru(tedim, 2 * shdim, thdim, thdim)
         maxout_transform = maxout(thdim, tedim, 2 * shdim, mhdim, maxpart = k)
         deepout_transform = linear(maxdim, deephid, bias = False)
         classify_transform = linear(deephid, tvsize)
-        decoder = gru(tedim, 2 * shdim, thdim, thdim)
 
         module.append(source_embedding)
         module.append(source_embedder)
@@ -275,10 +272,10 @@ class rnnsearch:
         module.append(annotation_transform)
         module.append(state_transform)
         module.append(context_transform)
+        module.append(decoder)
         module.append(maxout_transform)
         module.append(deepout_transform)
         module.append(classify_transform)
-        module.append(decoder)
 
         params = list(itertools.chain(*[m.parameter for m in module]))
 
@@ -289,7 +286,7 @@ class rnnsearch:
             tmask = theano.tensor.matrix()
 
             x = source_embedder(source_embedding(), sseq)
-            h = theano.tensor.zeros((sseq.shape[1], 1000))
+            h = theano.tensor.zeros((sseq.shape[1], shdim))
 
             def forward_step(x, m, h):
                 nh = forward_encoder(x, h)
@@ -349,7 +346,7 @@ class rnnsearch:
             def encode():
                 seq = theano.tensor.imatrix()
                 x = source_embedder(source_embedding(), seq)
-                h = theano.tensor.zeros((seq.shape[1], 1000))
+                h = theano.tensor.zeros((seq.shape[1], shdim))
 
                 def forward_step(x, h):
                     h = forward_encoder(x, h)
@@ -363,11 +360,11 @@ class rnnsearch:
                 hb, u = theano.scan(backward_step, [x[::-1]], [h])
                 hb = hb[::-1]
 
-                annotation = theano.tensor.concatenate([hf, hb], 2)
+                annot = theano.tensor.concatenate([hf, hb], 2)
                 state = theano.tensor.tanh(init_state_transform(hb[0]))
-                mannotation = annotation_transform(annotation)
+                mannot = annotation_transform(annot)
 
-                return theano.function([seq], [annotation, mannotation, state])
+                return theano.function([seq], [annot, mannot, state])
 
             def compute_prob():
                 a = theano.tensor.tensor3()

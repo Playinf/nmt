@@ -9,6 +9,7 @@ from experiments.nmt.state import prototype_state
 from experiments.nmt.encdec import RNNEncoderDecoder, parse_input
 from experiments.nmt import get_batch_iterator
 from rnnsearch import rnnsearch
+from fastrnnsearch import rnnsearch as fastrnnsearch
 
 if __name__ == '__main__':
     state = prototype_state()
@@ -46,8 +47,10 @@ if __name__ == '__main__':
     option['vocabulary'] = [[idict_src, indx_word], [idict_src, indx_word]]
 
     model = rnnsearch(**option)
+    fmodel = fastrnnsearch(**option)
     params = model.parameter
     params = [item.get_value() for item in params]
+    fparams = [item.get_value() for item in fmodel.parameter]
 
     train_lm = theano.function(lm_model.inputs, [lm_model.train_cost])
 
@@ -77,24 +80,25 @@ if __name__ == '__main__':
     mapping['A_dec_transition_0'] = 20
     mapping['B_dec_transition_0'] = 21
     mapping['D_dec_transition_0'] = 22
-    mapping['W_0_dec_hid_readout_0'] = 23
-    mapping['W_0_dec_prev_readout_0'] = 24
-    mapping['W_0_dec_repr_readout'] = 25
-    mapping['b_0_dec_hid_readout_0'] = 26
-    mapping['W1_dec_deep_softmax'] = 27
-    mapping['W2_dec_deep_softmax'] = 28
-    mapping['b_dec_deep_softmax'] = 29
-
-    mapping['W_0_dec_input_embdr_0'] = 30
-    mapping['W_0_dec_dec_inputter_0'] = 31
-    mapping['W_dec_transition_0'] = 32
-    mapping['b_0_dec_input_embdr_0'] = 33
-    mapping['W_0_dec_reset_embdr_0'] = 34
-    mapping['W_0_dec_dec_reseter_0'] = 35
-    mapping['R_dec_transition_0'] = 36
-    mapping['W_0_dec_update_embdr_0'] = 37
-    mapping['W_0_dec_dec_updater_0'] = 38
-    mapping['G_dec_transition_0'] = 39
+    # decoder rnn
+    mapping['W_0_dec_input_embdr_0'] = 23
+    mapping['W_0_dec_dec_inputter_0'] = 24
+    mapping['W_dec_transition_0'] = 25
+    mapping['b_0_dec_input_embdr_0'] = 26
+    mapping['W_0_dec_reset_embdr_0'] = 27
+    mapping['W_0_dec_dec_reseter_0'] = 28
+    mapping['R_dec_transition_0'] = 29
+    mapping['W_0_dec_update_embdr_0'] = 30
+    mapping['W_0_dec_dec_updater_0'] = 31
+    mapping['G_dec_transition_0'] = 32
+    # maxout, deepout and classification
+    mapping['W_0_dec_hid_readout_0'] = 33
+    mapping['W_0_dec_prev_readout_0'] = 34
+    mapping['W_0_dec_repr_readout'] = 35
+    mapping['b_0_dec_hid_readout_0'] = 36
+    mapping['W1_dec_deep_softmax'] = 37
+    mapping['W2_dec_deep_softmax'] = 38
+    mapping['b_dec_deep_softmax'] = 39
 
     zparams = numpy.load('search_model.npz')
     dparams = {}
@@ -105,12 +109,19 @@ if __name__ == '__main__':
     for item in mapping:
         index = mapping[item]
         model.parameter[index].set_value(dparams[item])
+        fmodel.parameter[index].set_value(dparams[item])
 
     encode, compute_prob, compute_state = model.sample
+    fencode, fcompute_istate, fcompute_prob, fcompute_state = fmodel.sample
 
     anno, manno, istate = encode(seq.astype('int32')[:, None])
     prob = compute_prob(numpy.array([0]).astype('int32'), anno, manno, istate)
     newstate = compute_state(numpy.array([2440]).astype('int32'), anno, manno, istate)
+
+    fanno = fencode(seq.astype('int32')[:, None])
+    fistate = fcompute_istate(fanno)
+    fprob = fcompute_prob(numpy.array([0]).astype('int32'), fanno, fistate)
+    fnewstate = fcompute_state(numpy.array([2440]).astype('int32'), fanno, fistate)
 
     train_data = get_batch_iterator(state)
     train_data.start(1)
@@ -121,8 +132,14 @@ if __name__ == '__main__':
     y = data['y']
     ymask = data['y_mask']
     cost = train_lm(y, x, xmask, ymask)
-    train = theano.function(model.input, model.output)
+    train = theano.function(model.input, model.output, on_unused_input = 'ignore')
     cost2 = train(x.astype('int32'), xmask, y.astype('int32'), ymask)
+
+    train1 = theano.function(fmodel.input, fmodel.output, on_unused_input = 'ignore')
+    cost1 = train1(x.astype('int32'), xmask, y.astype('int32'), ymask)
+
+    import sys
+    sys.exit()
 
     test_func = enc_dec.create_test_model()
 

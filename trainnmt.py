@@ -13,8 +13,8 @@ from rnnsearch import rnnsearch, decoder
 from utils import batchstream, tokenize, shuffle, numberize, normalize
 
 # load vocabulary from file
-def loadvocab(file):
-    fd = open(file, 'r')
+def loadvocab(name):
+    fd = open(name, 'r')
     vocab = cPickle.load(fd)
     fd.close()
     return vocab
@@ -108,7 +108,7 @@ def parseargs(args = None):
     parser.add_argument('--alpha', default = 1e-4, type = float, help = desc)
     # momentum
     desc = 'momentum'
-    parser.add_argument('--momentum', default = 0.0, type = float, help = desc)
+    parser.add_argument('--momentum', default = 0, type = float, help = desc)
     # batch
     desc = 'batch size'
     parser.add_argument('--batch', type = int, default = 128, help = desc)

@@ -36,9 +36,10 @@ def serialize(name, params, option):
 
 def get_mapping():
     mapping = {}
-    # encoder
+    # source embedding
     mapping['W_0_enc_approx_embdr'] = 0
     mapping['b_0_enc_approx_embdr'] = 1
+    # forward encoder
     mapping['W_0_enc_input_embdr_0'] = 2
     mapping['W_enc_transition_0'] = 3
     mapping['b_0_enc_input_embdr_0'] = 4
@@ -46,6 +47,7 @@ def get_mapping():
     mapping['R_enc_transition_0'] = 6
     mapping['W_0_enc_update_embdr_0'] = 7
     mapping['G_enc_transition_0'] = 8
+    # backward encoder
     mapping['W_0_back_enc_input_embdr_0'] = 9
     mapping['W_back_enc_transition_0'] = 10
     mapping['b_0_back_enc_input_embdr_0'] = 11
@@ -53,32 +55,37 @@ def get_mapping():
     mapping['R_back_enc_transition_0'] = 13
     mapping['W_0_back_enc_update_embdr_0'] = 14
     mapping['G_back_enc_transition_0'] = 15
-    # decoder
+    # target embedding
     mapping['W_0_dec_approx_embdr'] = 16
     mapping['b_0_dec_approx_embdr'] = 17
+    # initial state transform
     mapping['W_0_dec_initializer_0'] = 18
     mapping['b_0_dec_initializer_0'] = 19
+    # annotation linear transform
     mapping['A_dec_transition_0'] = 20
+    # state linear transform
     mapping['B_dec_transition_0'] = 21
+    # context state transform
     mapping['D_dec_transition_0'] = 22
-    mapping['W_0_dec_hid_readout_0'] = 23
-    mapping['W_0_dec_prev_readout_0'] = 24
-    mapping['W_0_dec_repr_readout'] = 25
-    mapping['b_0_dec_hid_readout_0'] = 26
-    mapping['W1_dec_deep_softmax'] = 27
-    mapping['W2_dec_deep_softmax'] = 28
-    mapping['b_dec_deep_softmax'] = 29
     # decoder rnn
-    mapping['W_0_dec_input_embdr_0'] = 30
-    mapping['W_0_dec_dec_inputter_0'] = 31
-    mapping['W_dec_transition_0'] = 32
-    mapping['b_0_dec_input_embdr_0'] = 33
-    mapping['W_0_dec_reset_embdr_0'] = 34
-    mapping['W_0_dec_dec_reseter_0'] = 35
-    mapping['R_dec_transition_0'] = 36
-    mapping['W_0_dec_update_embdr_0'] = 37
-    mapping['W_0_dec_dec_updater_0'] = 38
-    mapping['G_dec_transition_0'] = 39
+    mapping['W_0_dec_input_embdr_0'] = 23
+    mapping['W_0_dec_dec_inputter_0'] = 24
+    mapping['W_dec_transition_0'] = 25
+    mapping['b_0_dec_input_embdr_0'] = 26
+    mapping['W_0_dec_reset_embdr_0'] = 27
+    mapping['W_0_dec_dec_reseter_0'] = 28
+    mapping['R_dec_transition_0'] = 29
+    mapping['W_0_dec_update_embdr_0'] = 30
+    mapping['W_0_dec_dec_updater_0'] = 31
+    mapping['G_dec_transition_0'] = 32
+    # maxout, deepout, classification
+    mapping['W_0_dec_hid_readout_0'] = 33
+    mapping['W_0_dec_prev_readout_0'] = 34
+    mapping['W_0_dec_repr_readout'] = 35
+    mapping['b_0_dec_hid_readout_0'] = 36
+    mapping['W1_dec_deep_softmax'] = 37
+    mapping['W2_dec_deep_softmax'] = 38
+    mapping['b_dec_deep_softmax'] = 39
 
     return mapping
 

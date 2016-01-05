@@ -65,8 +65,6 @@ if __name__ == '__main__':
     option = {}
     option['size'] = args.beam_size
     option['threshold'] = args.threshold
-    option['maxlen'] = args.maxlen
-    option['minlen'] = args.minlen
     mdecoder = decoder(model, **option)
 
     option = model.option
@@ -77,8 +75,7 @@ if __name__ == '__main__':
 
     count = 0
 
-    #fd = open('/home/playinf/Workspace/data/dev-test/sjs/u8_nist02_src.token.plain')
-    fd = open('debug.txt')
+    fd = open('/home/playinf/Workspace/data/dev-test/sjs/u8_nist02_src.token.plain')
 
     while True:
         #line = sys.stdin.readline()
@@ -90,7 +87,7 @@ if __name__ == '__main__':
         data = [line]
         sentence = processdata(data, svocab)
         t1 = time.time()
-        hlist = mdecoder.decode(sentence)
+        hlist = mdecoder.decode(sentence, args.minlen, args.maxlen)
         t2 = time.time()
 
         if len(hlist) == 0:
