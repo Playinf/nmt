@@ -7,7 +7,8 @@ import time
 import cPickle
 import argparse
 
-from rnnsearch import rnnsearch, decoder
+from sampler import sampler
+from rnnsearch import rnnsearch
 from utils import tokenize, numberize, normalize
 
 # load model from file
@@ -41,9 +42,6 @@ def parseargs(args = None):
     # beam size
     desc = 'beam size'
     parser.add_argument('--beam-size', default = 10, type = int, help = desc)
-    # threshold
-    desc = 'beam search threshold'
-    parser.add_argument('--threshold', type = float, help = desc)
     # max length
     desc = 'max translation length'
     parser.add_argument('--maxlen', type = int, help = desc)
@@ -54,18 +52,15 @@ def parseargs(args = None):
     return parser.parse_args(args)
 
 if __name__ == '__main__':
-    cmd = '--model search_model.converted.pkl --beam-size 10'.split()
-    args = parseargs(cmd)
-
-    if args.threshold == None:
-        args.threshold = -1.0
+    args = parseargs()
 
     model = loadmodel(args.model)
 
     option = {}
     option['size'] = args.beam_size
-    option['threshold'] = args.threshold
-    mdecoder = decoder(model, **option)
+    option['maxlen'] = args.maxlen
+    option['minlen'] = args.minlen
+    mdecoder = sampler(model, **option)
 
     option = model.option
 
@@ -75,11 +70,8 @@ if __name__ == '__main__':
 
     count = 0
 
-    fd = open('/home/playinf/Workspace/data/dev-test/sjs/u8_nist02_src.token.plain')
-
     while True:
-        #line = sys.stdin.readline()
-        line = fd.readline()
+        line = sys.stdin.readline()
 
         if line == '':
             break
@@ -87,18 +79,16 @@ if __name__ == '__main__':
         data = [line]
         sentence = processdata(data, svocab)
         t1 = time.time()
-        hlist = mdecoder.decode(sentence, args.minlen, args.maxlen)
+        tlist = mdecoder.decode(sentence)
         t2 = time.time()
 
-        if len(hlist) == 0:
+        if len(tlist) == 0:
             sys.stdout.write('\n')
             score = -10000.0
         else:
-            best = hlist[0]
-            translation = best.translation[:-1]
-            sys.stdout.write(' '.join(translation))
+            best, score = tlist[0]
+            sys.stdout.write(' '.join(best[:-1]))
             sys.stdout.write('\n')
-            score = best.score
 
         count = count + 1
         sys.stderr.write(str(count) + ' ')

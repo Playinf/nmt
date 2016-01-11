@@ -9,12 +9,13 @@ import cPickle
 import argparse
 
 from trainer import trainer
-from rnnsearch import rnnsearch, decoder
+from sampler import sampler
+from rnnsearch import rnnsearch
 from utils import batchstream, tokenize, shuffle, numberize, normalize
 
 # load vocabulary from file
-def loadvocab(name):
-    fd = open(name, 'r')
+def loadvocab(file):
+    fd = open(file, 'r')
     vocab = cPickle.load(fd)
     fd.close()
     return vocab
@@ -99,6 +100,9 @@ def parseargs(args = None):
     # deepout dim
     desc = 'deepout hidden dimension'
     parser.add_argument('--deephid', default = 620, type = int, help = desc)
+    # local attention window
+    desc = 'local attention window size'
+    parser.add_argument('--window', default = 10, type = int, help = desc)
 
     # epoch
     desc = 'maximum training epoch'
@@ -117,7 +121,7 @@ def parseargs(args = None):
     parser.add_argument('--optimizer', type = str, help = desc)
     # gradient renormalization
     desc = 'gradient renormalization'
-    parser.add_argument('--norm', type = int, default = 1.0, help = desc)
+    parser.add_argument('--norm', type = float, default = 1.0, help = desc)
 
     return parser.parse_args(args)
 
@@ -173,6 +177,7 @@ def override(option, args):
     option['maxhid'] = args.maxhid
     option['maxpart'] = args.maxpart
     option['deephid'] = args.deephid
+    option['window'] = args.window
 
     option['corpus'] = [scorpus, tcorpus]
     option['vocabulary'] = [[svocab, isvocab], [tvocab, itvocab]]
@@ -219,7 +224,7 @@ if __name__ == '__main__':
         model = rnnsearch(**option)
         uniform(model.parameter, -0.01, 0.01)
 
-    mdecoder = decoder(model, size = 10, threshold = -1.0)
+    mdecoder = sampler(model, size = 10, threshold = -1.0)
     toption = {}
     toption['algorithm'] = option['optimizer']
     toption['variant'] = option['variant']
@@ -260,10 +265,10 @@ if __name__ == '__main__':
                 xdata = xdata[:, ind:ind + 1]
                 hls = mdecoder.decode(xdata)
                 if len(hls) > 0:
-                    best = hls[0]
+                    best, score = hls[0]
                     print sdata
                     print tdata
-                    print ' '.join(best.translation[:-1])
+                    print ' '.join(best[:-1])
                 else:
                     print sdata
                     print tdata
