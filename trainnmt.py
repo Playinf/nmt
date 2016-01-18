@@ -10,7 +10,7 @@ import argparse
 
 from trainer import trainer
 from sampler import sampler
-from rnnsearch import rnnsearch
+from rnnlsearch import rnnlsearch
 from utils import batchstream, tokenize, shuffle, numberize, normalize
 
 # load vocabulary from file
@@ -42,7 +42,7 @@ def loadmodel(name):
     fd = open(name, 'r')
     option = cPickle.load(fd)
     params = cPickle.load(fd)
-    model = rnnsearch(**option)
+    model = rnnlsearch(**option)
 
     for val, param in zip(params, model.parameter):
         param.set_value(val)
@@ -72,7 +72,7 @@ def processdata(data, voc):
     return xdata, xmask, ydata, ymask
 
 def parseargs(args = None):
-    desc = 'training rnnsearch'
+    desc = 'training rnnlsearch'
     parser = argparse.ArgumentParser(description = desc)
 
     # training corpus
@@ -221,7 +221,7 @@ if __name__ == '__main__':
     maxepoch = option['maxepoch']
 
     if init:
-        model = rnnsearch(**option)
+        model = rnnlsearch(**option)
         uniform(model.parameter, -0.01, 0.01)
 
     mdecoder = sampler(model, size = 10, threshold = -1.0)
