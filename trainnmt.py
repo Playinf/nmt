@@ -3,6 +3,7 @@
 # email: playinf@stu.xmu.edu.cn
 
 import os
+import math
 import time
 import numpy
 import cPickle
@@ -10,7 +11,7 @@ import argparse
 
 from trainer import trainer
 from sampler import sampler
-from rnnlsearch import rnnlsearch
+from rnnsearch import rnnsearch
 from utils import batchstream, tokenize, shuffle, numberize, normalize
 
 # load vocabulary from file
@@ -42,7 +43,7 @@ def loadmodel(name):
     fd = open(name, 'r')
     option = cPickle.load(fd)
     params = cPickle.load(fd)
-    model = rnnlsearch(**option)
+    model = rnnsearch(**option)
 
     for val, param in zip(params, model.parameter):
         param.set_value(val)
@@ -72,7 +73,7 @@ def processdata(data, voc):
     return xdata, xmask, ydata, ymask
 
 def parseargs(args = None):
-    desc = 'training rnnlsearch'
+    desc = 'training rnnsearch'
     parser = argparse.ArgumentParser(description = desc)
 
     # training corpus
@@ -100,9 +101,6 @@ def parseargs(args = None):
     # deepout dim
     desc = 'deepout hidden dimension'
     parser.add_argument('--deephid', default = 620, type = int, help = desc)
-    # local attention window
-    desc = 'local attention window size'
-    parser.add_argument('--window', default = 10, type = int, help = desc)
 
     # epoch
     desc = 'maximum training epoch'
@@ -177,7 +175,6 @@ def override(option, args):
     option['maxhid'] = args.maxhid
     option['maxpart'] = args.maxpart
     option['deephid'] = args.deephid
-    option['window'] = args.window
 
     option['corpus'] = [scorpus, tcorpus]
     option['vocabulary'] = [[svocab, isvocab], [tvocab, itvocab]]
@@ -205,9 +202,9 @@ if __name__ == '__main__':
         option = model.option
         init = False
     else:
-        override(option, args)
         init = True
 
+    override(option, args)
     svocabs, tvocabs = option['vocabulary']
     svocab, isvocab = svocabs
     tvocab, itvocab = tvocabs
@@ -221,8 +218,8 @@ if __name__ == '__main__':
     maxepoch = option['maxepoch']
 
     if init:
-        model = rnnlsearch(**option)
-        uniform(model.parameter, -0.01, 0.01)
+        model = rnnsearch(**option)
+        uniform(model.parameter, -0.08, 0.08)
 
     mdecoder = sampler(model, size = 10, threshold = -1.0)
     toption = {}
@@ -247,8 +244,8 @@ if __name__ == '__main__':
             option['count'] += 1
             count = option['count']
 
-            cost = cost / ymask.sum()
-            totcost += cost
+            cost = cost * ymask.shape[1] / ymask.sum()
+            totcost += cost / math.log(2)
             print i + 1, count, cost, norm, t2 - t1
 
             # save model
@@ -279,8 +276,8 @@ if __name__ == '__main__':
         print '--------------------------------------------------'
 
         # early stopping
-        #if i >= 4:
-        #    alpha = alpha / 2
+        if i >= 1:
+            alpha = alpha / 2
 
         stream.reset()
         option['epoch'] = i + 1

@@ -1,4 +1,4 @@
-# rnnsearch.py
+# fastrnnsearch.py
 # fast version of rnnsearch
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
@@ -30,18 +30,18 @@ class embedder:
 
         self.parameter = params
 
-    def __call__(self, emb, indices):
+    def __call__(self, emb, indexs):
 
-        if indices.ndim == 1:
-            values = emb[indices]
+        if indexs.ndim == 1:
+            values = emb[indexs]
             if len(self.parameter) == 0:
                 return values
             else:
                 bias = self.parameter[0]
                 return values + bias
-        elif indices.ndim == 2:
-            values = emb[indices.flatten()]
-            values = values.reshape((indices.shape[0], indices.shape[1], -1))
+        elif indexs.ndim == 2:
+            values = emb[indexs.flatten()]
+            values = values.reshape((indexs.shape[0], indexs.shape[1], -1))
 
             if len(self.parameter) == 0:
                 return values
@@ -368,7 +368,8 @@ class rnnsearch:
             idx = theano.tensor.arange(y.flatten().shape[0])
             cost = -theano.tensor.log(probs[idx, y.flatten()])
             cost = cost.reshape((y.shape[0], y.shape[1]))
-            cost = theano.tensor.sum(cost * ymask)
+            cost = theano.tensor.sum(cost * ymask, 0)
+            cost = theano.tensor.mean(cost)
 
             return [x, xmask, y, ymask], [cost]
 
@@ -421,6 +422,7 @@ class rnnsearch:
                 return theano.function([y, a, s], state)
 
             return encode(), compute_istate(), compute_prob(), compute_state()
+
 
         inputs, outputs = build_training()
         gradient = theano.grad(outputs[0], params)
