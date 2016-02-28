@@ -30,18 +30,18 @@ class embedder:
 
         self.parameter = params
 
-    def __call__(self, emb, indexs):
+    def __call__(self, emb, indices):
 
-        if indexs.ndim == 1:
-            values = emb[indexs]
+        if indices.ndim == 1:
+            values = emb[indices]
             if len(self.parameter) == 0:
                 return values
             else:
                 bias = self.parameter[0]
                 return values + bias
-        elif indexs.ndim == 2:
-            values = emb[indexs.flatten()]
-            values = values.reshape((indexs.shape[0], indexs.shape[1], -1))
+        elif indices.ndim == 2:
+            values = emb[indices.flatten()]
+            values = values.reshape((indices.shape[0], indices.shape[1], -1))
 
             if len(self.parameter) == 0:
                 return values
@@ -49,7 +49,7 @@ class embedder:
                 bias = self.parameter[0]
                 return values + bias
         else:
-            raise RuntimeError('indexs must be a 1d or 2d integer array')
+            raise RuntimeError('indices must be a 1d or 2d integer array')
 
 # gated recurrent unit
 class gru:
