@@ -52,6 +52,16 @@ def loadmodel(name):
 
     return model
 
+def setmodel(name, model):
+    fd = open(name, 'r')
+    option = cPickle.load(fd)
+    params = cPickle.load(fd)
+
+    for val, param in zip(params, model.parameter):
+        param.set_value(val)
+
+    fd.close()
+
 def uniform(params, lower, upper):
     precision = 'float32'
 
@@ -229,6 +239,8 @@ if __name__ == '__main__':
     toption['norm'] = True
     modeltrainer = trainer(model, **toption)
     alpha = option['alpha']
+    errcount = 0
+    warncount = 0
 
     for i in range(epoch, maxepoch):
         totcost = 0.0
@@ -238,7 +250,24 @@ if __name__ == '__main__':
             xdata, xmask, ydata, ymask = processdata(data, [svocab, tvocab])
             t1 = time.time()
             cost, norm = modeltrainer.train(xdata, xmask, ydata, ymask)
-            modeltrainer.update(alpha = alpha)
+
+            if numpy.isnan(norm):
+                print 'error: nan occurred', errcount + 1
+                errcount = errcount + 1
+                if errcount >= 5:
+                    errcount = 0
+                    print 'restoring parameter from autosave'
+                    setmodel('nmt.autosave.pkl', model)
+            elif norm > 10000:
+                print 'warning: very large norm', warncount + 1
+                warncount = warncount + 1
+                if warncount >= 5:
+                    warncount = 0
+                    print 'restoring parameter from autosave'
+                    setmodel('nmt.autosave.pkl', model)
+            else:
+                modeltrainer.update(alpha = alpha)
+
             t2 = time.time()
 
             option['count'] += 1
