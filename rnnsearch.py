@@ -1,4 +1,4 @@
-# fastrnnsearch.py
+# rnnsearch.py
 # fast version of rnnsearch
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
