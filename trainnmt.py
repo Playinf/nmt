@@ -190,6 +190,12 @@ def parseargs(args = None):
     # gradient renormalization
     desc = 'gradient renormalization'
     parser.add_argument('--norm', type = float, default = 1.0, help = desc)
+    # early stopping
+    desc = 'early stopping iteration'
+    parser.add_argument('--stop', type = int, default = 0, help = desc)
+    # decay factor
+    desc = 'decay factor'
+    parser.add_argument('--decay', type = float, default = 0.5, help = desc)
     
     # compute bit per cost
     desc = 'compute bit per cost on validate dataset'
@@ -326,6 +332,8 @@ if __name__ == '__main__':
     alpha = option['alpha']
 
     print nparameters(model.parameter)
+    
+    best_score = 0.0
 
     for i in range(epoch, maxepoch):
         totcost = 0.0
@@ -368,6 +376,11 @@ if __name__ == '__main__':
                     trans = translate(mdecoder, args.validate)
                     bleu_score = bleu(trans, references)
                     print 'bleu:', bleu_score
+                    if bleu_score > best_score:
+                        best_score = bleu_score
+                        bestname = modelname + '.best.pkl'
+                        filename = os.path.join(pathname, bestname)
+                        serialize(filename, model)
 
             option['cost'] = totcost
 
@@ -397,14 +410,19 @@ if __name__ == '__main__':
             trans = translate(mdecoder, args.validate)
             bleu_score = bleu(trans, references)
             print i + 1, 'bleu:', bleu_score
+            if bleu_score > best_score:
+                best_score = bleu_score
+                bestname = modelname + '.best.pkl'
+                filename = os.path.join(pathname, bestname)
+                serialize(filename, model)
 
         print '--------------------------------------------------'
         print 'averaged cost: ', totcost / option['count']
         print '--------------------------------------------------'
 
         # early stopping
-        if i >= 1:
-            alpha = alpha / 2
+        if i >= args.stop:
+            alpha = alpha * args.decay
 
         stream.reset()
         option['epoch'] = i + 1
