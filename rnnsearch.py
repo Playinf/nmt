@@ -1,4 +1,4 @@
-# fastrnnsearch.py
+# rnnsearch.py
 # fast version of rnnsearch
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
@@ -31,25 +31,15 @@ class embedder:
         self.parameter = params
 
     def __call__(self, emb, indices):
+        shape = indices.shape + [-1]
+        values = emb[indices.flatten()]
+        values = values.reshape(*shape)
 
-        if indices.ndim == 1:
-            values = emb[indices]
-            if len(self.parameter) == 0:
-                return values
-            else:
-                bias = self.parameter[0]
-                return values + bias
-        elif indices.ndim == 2:
-            values = emb[indices.flatten()]
-            values = values.reshape((indices.shape[0], indices.shape[1], -1))
-
-            if len(self.parameter) == 0:
-                return values
-            else:
-                bias = self.parameter[0]
-                return values + bias
+        if len(self.parameter == 0):
+            return values
         else:
-            raise RuntimeError('indices must be a 1d or 2d integer array')
+            bias = self.parameter[0]
+            return values + bias
 
 # gated recurrent unit
 class gru:
@@ -152,15 +142,16 @@ class grusearch:
 
         manno = theano.dot(anno, wa)
 
-        def step(y, m, s, xm, a, ma, ws, wc, *p):
-            w, c, u, b, wr, cr, ur, wz, cz, uz = p
+        def attention(xm, s, ma, ws, wc):
             ms = theano.dot(s, ws)
             e = theano.dot(tanh(ms + ma), wc)
             e = e.reshape((e.shape[0], e.shape[1]))
             alpha = theano.tensor.exp(e)
             alpha = alpha * xm
             alpha = alpha / theano.tensor.sum(alpha, 0)
-            ct = theano.tensor.sum(alpha[:, :, None] * a, 0)
+            return alpha
+
+        def grustep(y, ct, s, wr, cr, ur, wz, cz, uz, w, c, u):
             r = theano.dot(y, wr) + theano.dot(ct, cr) + theano.dot(s, ur)
             z = theano.dot(y, wz) + theano.dot(ct, cz) + theano.dot(s, uz)
             r = sigmoid(r)
@@ -168,6 +159,13 @@ class grusearch:
             t = theano.dot(y, w) + theano.dot(ct, c) + theano.dot(r * s, u)
             t = tanh(t + b)
             ns = (1.0 - z) * s + z * t
+            return ns
+
+        def step(y, m, s, xm, a, ma, ws, wc, *p):
+            w, c, u, b, wr, cr, ur, wz, cz, uz = p
+            alpha = attention(xm, s, ma, ws, wc)
+            ct = theano.tensor.sum(alpha[:, :, None] * a, 0)
+            ns = grustep(y, ct, s, wr, cr, ur, wz, cz, uz, w, c, u)
             ns = (1.0 - m[:, None]) * s + m[:, None] * ns
             return [ns, ct]
 
@@ -423,7 +421,6 @@ class rnnsearch:
 
             return encode(), compute_istate(), compute_prob(), compute_state()
 
-
         inputs, outputs = build_training()
         gradient = theano.grad(outputs[0], params)
 
@@ -432,7 +429,7 @@ class rnnsearch:
         self.option = option
         self.module = [enc, dec]
         self.gradient = gradient
-        self.compute = theano.function(inputs, outputs)
         self.sample = build_sampling()
+        self.compute = theano.function(inputs, outputs)
         self.parameter = params
         self.vocabulary = option['vocabulary']
