@@ -9,10 +9,11 @@ import numpy
 import cPickle
 import argparse
 
-from trainer import trainer
+from bleu import bleu
 from sampler import sampler
+from optimizer import optimizer
 from rnnsearch import rnnsearch
-from utils import batchstream, tokenize, shuffle, numberize, normalize
+from utils import batchstream, tokenize, numberize, normalize
 
 # load vocabulary from file
 def loadvocab(file):
@@ -52,13 +53,15 @@ def loadmodel(name):
 
     return model
 
-def setmodel(name, model):
+def restoremodel(name, model):
     fd = open(name, 'r')
-    option = cPickle.load(fd)
+    opts = cPickle.load(fd)
     params = cPickle.load(fd)
 
     for val, param in zip(params, model.parameter):
         param.set_value(val)
+
+    model.option = opts
 
     fd.close()
 
@@ -71,16 +74,73 @@ def uniform(params, lower, upper):
         p.set_value(v)
 
 def processdata(data, voc):
-    xdata, ydata = data
-    xvocab, yvocab = voc
-    xdata = [tokenize(item) + ['<eos>'] for item in xdata]
-    ydata = [tokenize(item) + ['<eos>'] for item in ydata]
-    xdata = numberize(xdata, xvocab)
-    ydata = numberize(ydata, yvocab)
-    xdata, xmask = normalize(xdata)
-    ydata, ymask = normalize(ydata)
+    data = [tokenize(item) + ['<eos>'] for item in data]
+    data = numberize(data, voc)
+    data, mask = normalize(data)
 
-    return xdata, xmask, ydata, ymask
+    return data, mask
+
+def loadreferences(names):
+    references = []
+    stream = batchstream(names)
+
+    for data in stream:
+        newdata= []
+        for batch in data:
+            line = batch[0]
+            words = line.strip().split()
+            lower = [word.lower() for word in words]
+            newdata.append(lower)
+
+        references.append(newdata)
+
+    stream.close()
+
+    return references
+
+def validate(scorpus, tcorpus, model, batch):
+
+    if not scorpus or not tcorpus:
+        return None
+
+    stream = batchstream([scorpus, tcorpus], batch)
+    svocabs, tvocabs = model.vocabulary
+    totcost = 0.0
+    count = 0
+
+    for data in stream:
+        xdata, xmask = processdata(data[0], svocabs[0])
+        ydata, ymask = processdata(data[1], tvocabs[0])
+        cost = model.compute(xdata, xmask, ydata, ymask)
+        cost = cost[0]
+        cost = cost * ymask.shape[1] / ymask.sum()
+        totcost += cost / math.log(2)
+        count = count + 1
+
+    stream.close()
+
+    bpc = totcost / count
+
+    return bpc
+
+def translate(dec, corpus):
+    fd = open(corpus, 'r')
+    svocab = dec.vocabulary[0][0]
+    trans = []
+
+    for line in fd:
+        line = line.strip()
+        data, mask = processdata([line], svocab)
+        hls = dec.decode(data)
+        if len(hls) > 0:
+            best, score = hls[0]
+            trans.append(best[:-1])
+        else:
+            trans.append([])
+
+    fd.close()
+
+    return trans
 
 def parseargs(args = None):
     desc = 'training rnnsearch'
@@ -130,8 +190,27 @@ def parseargs(args = None):
     # gradient renormalization
     desc = 'gradient renormalization'
     parser.add_argument('--norm', type = float, default = 1.0, help = desc)
+    
+    # compute bit per cost
+    desc = 'compute bit per cost on validate dataset'
+    parser.add_argument('--bpc', action = 'store_true', help = desc)
+    # validate data
+    desc = 'validate dataset'
+    parser.add_argument('--validate', type = str, default = None, help = desc)
+    # reference
+    desc = 'reference data'
+    parser.add_argument('--ref', type = str, nargs = '+', help = desc)
 
     return parser.parse_args(args)
+
+def nparameters(params):
+    n = 0
+
+    for item in params:
+        v = item.get_value()
+        n += v.size
+
+    return n
 
 def getoption():
     option = {}
@@ -214,6 +293,11 @@ if __name__ == '__main__':
     else:
         init = True
 
+    if args.ref:
+        references = loadreferences(args.ref)
+    else:
+        references = None
+
     override(option, args)
     svocabs, tvocabs = option['vocabulary']
     svocab, isvocab = svocabs
@@ -221,7 +305,8 @@ if __name__ == '__main__':
 
     pathname, basename = os.path.split(args.model)
     modelname = getfilename(basename)
-    stream = batchstream(option['corpus'], option['batch'])
+    batch = option['batch']
+    stream = batchstream(option['corpus'], batch)
 
     skipstream(stream, option['count'])
     epoch = option['epoch']
@@ -237,36 +322,26 @@ if __name__ == '__main__':
     toption['variant'] = option['variant']
     toption['constraint'] = ('norm', option['norm'])
     toption['norm'] = True
-    modeltrainer = trainer(model, **toption)
+    trainer = optimizer(model, **toption)
     alpha = option['alpha']
-    errcount = 0
-    warncount = 0
+
+    print nparameters(model.parameter)
 
     for i in range(epoch, maxepoch):
         totcost = 0.0
         for data in stream:
-            shuffle(data)
-
-            xdata, xmask, ydata, ymask = processdata(data, [svocab, tvocab])
+            xdata, xmask = processdata(data[0], svocab)
+            ydata, ymask = processdata(data[1], tvocab)
             t1 = time.time()
-            cost, norm = modeltrainer.train(xdata, xmask, ydata, ymask)
+            cost, norm = trainer.optimize(xdata, xmask, ydata, ymask)
 
-            if numpy.isnan(norm):
-                print 'error: nan occurred', errcount + 1
-                errcount = errcount + 1
-                if errcount >= 5:
-                    errcount = 0
-                    print 'restoring parameter from autosave'
-                    setmodel('nmt.autosave.pkl', model)
-            elif norm > 10000:
-                print 'warning: very large norm', warncount + 1
-                warncount = warncount + 1
-                if warncount >= 5:
-                    warncount = 0
-                    print 'restoring parameter from autosave'
-                    setmodel('nmt.autosave.pkl', model)
+            if not numpy.isnan(norm) or norm < 1000:
+                trainer.update(alpha = alpha)
+            elif numpy.isnan(norm):
+                print 'warning: nan occured, restore parameters'
+                restoremodel('nmt.autosave', model)
             else:
-                modeltrainer.update(alpha = alpha)
+                print 'not updating parameter', norm
 
             t2 = time.time()
 
@@ -279,13 +354,25 @@ if __name__ == '__main__':
 
             # save model
             if option['count'] % 1000 == 0:
+                model.option = option
                 filename = os.path.join(pathname, modelname + '.autosave.pkl')
                 serialize(filename, model)
+
+                if args.bpc:
+                    for ref in args.ref:
+                        bpc = validate(args.validate, ref, model, batch)
+                    if bpc:
+                        print count, 'bpc:', bpc
+
+                if args.validate and references:
+                    trans = translate(mdecoder, args.validate)
+                    bleu_score = bleu(trans, references)
+                    print 'bleu:', bleu_score
 
             option['cost'] = totcost
 
             if count % 50 == 0:
-                ind = numpy.random.randint(0, option['batch'])
+                ind = numpy.random.randint(0, batch)
                 sdata = data[0][ind]
                 tdata = data[1][ind]
                 xdata = xdata[:, ind:ind + 1]
@@ -299,6 +386,17 @@ if __name__ == '__main__':
                     print sdata
                     print tdata
                     print 'warning: no translation'
+
+        if args.bpc:
+            for ref in args.ref:
+                bpc = validate(args.validate, ref, model, batch)
+                if bpc:
+                    print 'bpc:', bpc
+
+        if args.validate and references:
+            trans = translate(mdecoder, args.validate)
+            bleu_score = bleu(trans, references)
+            print i + 1, 'bleu:', bleu_score
 
         print '--------------------------------------------------'
         print 'averaged cost: ', totcost / option['count']
@@ -317,3 +415,5 @@ if __name__ == '__main__':
         filename = modelname + '.iter-' + str(option['epoch']) + '.pkl'
         filename = os.path.join(pathname, filename)
         serialize(filename, model)
+
+    stream.close()

@@ -106,3 +106,7 @@ class batchstream:
 
         for f in self.stream:
             f.seek(0)
+
+    def close(self):
+        for fd in self.stream:
+            fd.close()

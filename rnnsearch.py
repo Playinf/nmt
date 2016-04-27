@@ -1,4 +1,4 @@
-# rnnsearch.py
+# fastrnnsearch.py
 # fast version of rnnsearch
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
@@ -432,6 +432,7 @@ class rnnsearch:
         self.option = option
         self.module = [enc, dec]
         self.gradient = gradient
+        self.compute = theano.function(inputs, outputs)
         self.sample = build_sampling()
         self.parameter = params
         self.vocabulary = option['vocabulary']
