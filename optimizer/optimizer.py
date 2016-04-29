@@ -183,8 +183,8 @@ class optimizer:
 
         params = model.parameter
         grads = model.gradient
-        inputs = model.input
-        outputs = model.output
+        inputs = model.inputs
+        outputs = model.outputs
 
         vec = [theano.shared(numpy.zeros_like(p.get_value())) for p in params]
 

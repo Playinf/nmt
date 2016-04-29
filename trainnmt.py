@@ -6,79 +6,13 @@ import os
 import math
 import time
 import numpy
-import cPickle
 import argparse
 
-from bleu import bleu
-from sampler import sampler
+from nmt import nmt, sampler
 from optimizer import optimizer
-from rnnsearch import rnnsearch
-from utils import batchstream, tokenize, numberize, normalize
-
-# load vocabulary from file
-def loadvocab(file):
-    fd = open(file, 'r')
-    vocab = cPickle.load(fd)
-    fd.close()
-    return vocab
-
-def invertvoc(vocab):
-    v = {}
-    for k, idx in vocab.iteritems():
-        v[idx] = k
-
-    return v
-
-# write model into file
-def serialize(name, model):
-    fd = open(name, 'w')
-    option = model.option
-    params = model.parameter
-    pval = [item.get_value() for item in params]
-    cPickle.dump(option, fd)
-    cPickle.dump(pval, fd)
-    fd.close()
-
-# load model from file
-def loadmodel(name):
-    fd = open(name, 'r')
-    option = cPickle.load(fd)
-    params = cPickle.load(fd)
-    model = rnnsearch(**option)
-
-    for val, param in zip(params, model.parameter):
-        param.set_value(val)
-
-    fd.close()
-
-    return model
-
-def restoremodel(name, model):
-    fd = open(name, 'r')
-    opts = cPickle.load(fd)
-    params = cPickle.load(fd)
-
-    for val, param in zip(params, model.parameter):
-        param.set_value(val)
-
-    model.option = opts
-
-    fd.close()
-
-def uniform(params, lower, upper):
-    precision = 'float32'
-
-    for p in params:
-        s = p.get_value().shape
-        v = numpy.random.uniform(lower, upper, s).astype(precision)
-        p.set_value(v)
-
-def processdata(data, voc):
-    data = [tokenize(item) + ['<eos>'] for item in data]
-    data = numberize(data, voc)
-    data, mask = normalize(data)
-
-    return data, mask
+from data import batchstream, processdata
+from utils import loadvocab, invertvoc, bleu
+from utils import serialize, loadmodel, uniform, parameters
 
 def loadreferences(names):
     references = []
@@ -196,7 +130,7 @@ def parseargs(args = None):
     # decay factor
     desc = 'decay factor'
     parser.add_argument('--decay', type = float, default = 0.5, help = desc)
-    
+
     # compute bit per cost
     desc = 'compute bit per cost on validate dataset'
     parser.add_argument('--bpc', action = 'store_true', help = desc)
@@ -209,14 +143,7 @@ def parseargs(args = None):
 
     return parser.parse_args(args)
 
-def nparameters(params):
-    n = 0
 
-    for item in params:
-        v = item.get_value()
-        n += v.size
-
-    return n
 
 def getoption():
     option = {}
@@ -317,9 +244,10 @@ if __name__ == '__main__':
     skipstream(stream, option['count'])
     epoch = option['epoch']
     maxepoch = option['maxepoch']
+    option['model'] = 'rnnsearch'
 
     if init:
-        model = rnnsearch(**option)
+        model = nmt(**option)
         uniform(model.parameter, -0.08, 0.08)
 
     mdecoder = sampler(model, size = 10, threshold = -1.0)
@@ -331,8 +259,8 @@ if __name__ == '__main__':
     trainer = optimizer(model, **toption)
     alpha = option['alpha']
 
-    print nparameters(model.parameter)
-    
+    print parameters(model.parameter)
+
     best_score = 0.0
 
     for i in range(epoch, maxepoch):
@@ -347,7 +275,7 @@ if __name__ == '__main__':
                 trainer.update(alpha = alpha)
             elif numpy.isnan(norm):
                 print 'warning: nan occured, restore parameters'
-                restoremodel('nmt.autosave', model)
+                model = loadmodel('nmt.autosave.pkl')
             else:
                 print 'not updating parameter', norm
 

@@ -12,27 +12,15 @@ def loadpkl(name):
     fd.close()
     return vocab
 
-def processline(line, mode = 'plain'):
-    if mode == 'plain':
-        return processplain(line)
-    if mode == 'lattice':
-        return processlattice(line)
+def processline(line):
+    return line.strip().split(' ')
 
-def processplain(line):
-    return line.strip().split()
-
-def processlattice(line):
-    line = line.split(' ')
-    vlist = [v.split(':') for v in line]
-    vlist = [v[0] for v in vlist]
-    return vlist
-
-def countword(name, mode):
+def countword(name):
     fd = open(name, 'r')
     vocab = {}
 
     for line in fd:
-        wordlist = processline(line, mode)
+        wordlist = processline(line)
         for word in wordlist:
             vocab[word] = 1 if word not in vocab else vocab[word] + 1
 
@@ -40,17 +28,17 @@ def countword(name, mode):
 
     return vocab
 
-def countchar(name, mode):
+def countchar(name):
     fd = open(name, 'r')
     vocab = {}
 
     for line in fd:
-        wordlist = processline(line, mode)
+        wordlist = processline(line)
         for word in wordlist:
             word = word.decode('utf-8')
             for char in word:
                 char = char.encode('utf-8')
-                vocab[char] = 1 if char not in vocab else vocab[char] + 1
+                vocab[char] = 1 if word not in vocab else vocab[char] + 1
 
     fd.close()
 
@@ -110,8 +98,6 @@ def parsearg():
     parser.add_argument('--alpha', action = 'store_true', help = 'desc')
     desc = 'add token'
     parser.add_argument('--token', type = str, help = desc)
-    desc = 'mode'
-    parser.add_argument('--mode', default = 'plain', type = str, help = desc)
 
     return parser.parse_args()
 
@@ -119,9 +105,9 @@ if __name__ == '__main__':
     args = parsearg()
 
     if args.char:
-        vocab = countchar(args.corpus, args.mode)
+        vocab = countchar(args.corpus)
     else:
-        vocab = countword(args.corpus, args.mode)
+        vocab = countword(args.corpus)
 
     if args.token != None:
         tokens = parsetokens(args.token)
