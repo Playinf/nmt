@@ -2,6 +2,10 @@
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
 
+import cPickle
+
+from nmt import nmt
+
 # write model into file
 def serialize(name, model):
     fd = open(name, 'w')
@@ -17,7 +21,7 @@ def loadmodel(name):
     fd = open(name, 'r')
     option = cPickle.load(fd)
     params = cPickle.load(fd)
-    model = rnnsearch(**option)
+    model = nmt(**option)
 
     for val, param in zip(params, model.parameter):
         param.set_value(val)
