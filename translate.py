@@ -1,4 +1,4 @@
-#!/usr/bin/python
+# translate.py
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
 
@@ -7,11 +7,9 @@ import time
 import cPickle
 import argparse
 
-from sampler import sampler
-from rnnsearch import rnnsearch
-from utils import tokenize, numberize, normalize
+from data import processdata
+from model.rnnsearch import rnnsearch, beamsearch
 
-# load model from file
 def loadmodel(name):
     fd = open(name, 'r')
     option = cPickle.load(fd)
@@ -25,13 +23,6 @@ def loadmodel(name):
 
     return model
 
-def processdata(data, voc):
-    data = [tokenize(item) + ['<eos>'] for item in data]
-    data = numberize(data, voc)
-    data = normalize(data)
-
-    return data[0]
-
 def parseargs(args = None):
     desc = 'translate using exsiting nmt model'
     parser = argparse.ArgumentParser(description = desc)
@@ -42,6 +33,9 @@ def parseargs(args = None):
     # beam size
     desc = 'beam size'
     parser.add_argument('--beam-size', default = 10, type = int, help = desc)
+    # normalize
+    desc = 'normalize'
+    parser.add_argument('--normalize', action = 'store_true', help = desc)
     # max length
     desc = 'max translation length'
     parser.add_argument('--maxlen', type = int, help = desc)
@@ -56,19 +50,17 @@ if __name__ == '__main__':
 
     model = loadmodel(args.model)
 
-    option = {}
-    option['size'] = args.beam_size
-    option['maxlen'] = args.maxlen
-    option['minlen'] = args.minlen
-    mdecoder = sampler(model, **option)
-
-    option = model.option
-
-    svocabs, tvocabs = option['vocabulary']
+    svocabs, tvocabs = model.option['vocabulary']
     svocab, isvocab = svocabs
     tvocab, itvocab = tvocabs
 
     count = 0
+
+    option = {}
+    option['maxlen'] = args.maxlen
+    option['minlen'] = args.minlen
+    option['beamsize'] = args.beam_size
+    option['normalize'] = args.normalize
 
     while True:
         line = sys.stdin.readline()
@@ -77,9 +69,9 @@ if __name__ == '__main__':
             break
 
         data = [line]
-        sentence = processdata(data, svocab)
+        seq, mask = processdata(data, svocab)
         t1 = time.time()
-        tlist = mdecoder.decode(sentence)
+        tlist = beamsearch(model, seq, **option)
         t2 = time.time()
 
         if len(tlist) == 0:
