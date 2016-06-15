@@ -20,8 +20,7 @@ def extract_option(opt, prefix):
     for key in opt:
         keys = key.split('/')
         if keys[0] == prefix:
-            if len(keys) > 1:
-                newopt['/'.join(keys[1:])] = opt[key]
+            newopt['/'.join(keys[1:])] = opt[key]
 
     return newopt
 
