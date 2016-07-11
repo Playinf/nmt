@@ -91,10 +91,7 @@ class linear:
                     else:
                         outs.append(theano.dot(v, w))
             else:
-                if len(x) == 1:
-                    x = x[0]
-                else:
-                    x = theano.tensor.concatenate(x, -1)
+                x = theano.tensor.concatenate(x, -1)
                 if transpose:
                     outs.append(theano.dot(x, weight[0].transpose()))
                 else:

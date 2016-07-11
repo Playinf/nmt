@@ -75,7 +75,7 @@ def loadreferences(names, case = True):
         for batch in data:
             line = batch[0]
             words = line.strip().split()
-            if case:
+            if not case:
                 lower = [word.lower() for word in words]
                 newdata.append(lower)
             else:
@@ -242,8 +242,8 @@ def override(option, args):
 
     option['source_eos_id'] = len(isvocab)
     option['target_eos_id'] = len(itvocab)
-
     option['eos'] = '<eos>'
+
     svocab['<eos>'] = option['source_eos_id']
     tvocab['<eos>'] = option['target_eos_id']
     isvocab[option['source_eos_id']] = '<eos>'

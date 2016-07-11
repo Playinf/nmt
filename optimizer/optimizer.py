@@ -30,7 +30,6 @@ class optimizer:
         scan_updates = model.updates
 
         grads = theano.grad(cost, params)
-        gradsref = grads
 
         vec = [theano.shared(numpy.zeros_like(p.get_value())) for p in params]
 
@@ -55,9 +54,6 @@ class optimizer:
         if 'initialize' not in option:
             option['initialize'] = False
 
-        if 'nanguard' not in option:
-            option['nanguard'] = True
-
         algorithm = option['algorithm']
         variant = option['variant']
         variant = [variant] if variant != None else []
@@ -73,16 +69,6 @@ class optimizer:
                 grads = constraint.grad_clip(grads, value[0], value[1])
             if method == 'norm':
                 grads = constraint.grad_renormalize(grads, value)
-
-        if option['nanguard']:
-            gnorm = constraint.grad_norm(gradsref)
-            isnan = theano.tensor.isnan(gnorm)
-            isinf = theano.tensor.isinf(gnorm)
-            notfinite = theano.tensor.or_(isnan, isinf)
-            newgrads = []
-            for p, g in zip(params, grads):
-                newgrads.append(theano.tensor.switch(notfinite, 0.1 * p, g))
-            grads = newgrads
 
         if option['nesterov']:
             option['momentum'] = False

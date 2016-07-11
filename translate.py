@@ -50,17 +50,17 @@ if __name__ == '__main__':
 
     model = loadmodel(args.model)
 
-    svocabs, tvocabs = model.option['vocabulary']
-    svocab, isvocab = svocabs
-    tvocab, itvocab = tvocabs
-
-    count = 0
-
     option = {}
     option['maxlen'] = args.maxlen
     option['minlen'] = args.minlen
     option['beamsize'] = args.beam_size
     option['normalize'] = args.normalize
+
+    svocabs, tvocabs = model.option['vocabulary']
+    svocab, isvocab = svocabs
+    tvocab, itvocab = tvocabs
+
+    count = 0
 
     while True:
         line = sys.stdin.readline()
