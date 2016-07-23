@@ -14,10 +14,10 @@ from utils import update_option, add_parameters, uniform_tensor
 # output_size: dimension of y
 # available options:
 # 1. name: str, default 'linear'
-# 2. bias: boolean, True to use bias, False to not use bias
+# 2. bias: boolean, True to use bias, False not to use bias
 # 3. weight: boolean, True stands for Wx, False stands for xW
 # 4. variant: str, standard or fast
-# 4. target: target device, default theano.config.device
+# 4. target: target device, default auto
 class linear:
 
     def __init__(self, input_size, output_size, **option):
@@ -91,7 +91,10 @@ class linear:
                     else:
                         outs.append(theano.dot(v, w))
             else:
-                x = theano.tensor.concatenate(x, -1)
+                if len(x) == 1:
+                    x = x[0]
+                else:
+                    x = theano.tensor.concatenate(x, -1)
                 if transpose:
                     outs.append(theano.dot(x, weight[0].transpose()))
                 else:

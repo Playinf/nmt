@@ -3,6 +3,7 @@
 # email: playinf@stu.xmu.edu.cn
 
 import os
+import sys
 import math
 import time
 import numpy
@@ -131,9 +132,10 @@ def translate(model, corpus):
 
     return trans
 
-def parseargs(args = None):
+def parseargs_train(args):
     desc = 'training rnnsearch'
-    parser = argparse.ArgumentParser(description = desc)
+    usage = 'rnnsearch.py train [<args>] [-h | --help]'
+    parser = argparse.ArgumentParser(description = desc, usage = usage)
 
     # training corpus
     desc = 'source and target corpus'
@@ -208,6 +210,29 @@ def parseargs(args = None):
 
     return parser.parse_args(args)
 
+def parseargs_decode(args):
+    desc = 'translate using exsiting nmt model'
+    usage = 'rnnsearch.py translate [<args>] [-h | --help]'
+    parser = argparse.ArgumentParser(description = desc, usage = usage)
+
+    # input model
+    desc = 'trained model'
+    parser.add_argument('--model', required = True, help = desc)
+    # beam size
+    desc = 'beam size'
+    parser.add_argument('--beam-size', default = 10, type = int, help = desc)
+    # normalize
+    desc = 'normalize'
+    parser.add_argument('--normalize', action = 'store_true', help = desc)
+    # max length
+    desc = 'max translation length'
+    parser.add_argument('--maxlen', type = int, help = desc)
+    # min length
+    desc = 'min translation length'
+    parser.add_argument('--minlen', type = int, help = desc)
+
+    return parser.parse_args(args)
+
 def getoption():
     option = {}
 
@@ -242,8 +267,8 @@ def override(option, args):
 
     option['source_eos_id'] = len(isvocab)
     option['target_eos_id'] = len(itvocab)
-    option['eos'] = '<eos>'
 
+    option['eos'] = '<eos>'
     svocab['<eos>'] = option['source_eos_id']
     tvocab['<eos>'] = option['target_eos_id']
     isvocab[option['source_eos_id']] = '<eos>'
@@ -278,8 +303,7 @@ def getfilename(name):
     s = name.split('.')
     return s[0]
 
-if __name__ == '__main__':
-    args = parseargs()
+def train(args):
     option = getoption()
     init = True
 
@@ -441,3 +465,63 @@ if __name__ == '__main__':
         serialize(filename, model)
 
     stream.close()
+
+def decode(args):
+    model = loadmodel(args.model)
+
+    svocabs, tvocabs = model.option['vocabulary']
+    svocab, isvocab = svocabs
+    tvocab, itvocab = tvocabs
+
+    count = 0
+
+    option = {}
+    option['maxlen'] = args.maxlen
+    option['minlen'] = args.minlen
+    option['beamsize'] = args.beam_size
+    option['normalize'] = args.normalize
+
+    while True:
+        line = sys.stdin.readline()
+
+        if line == '':
+            break
+
+        data = [line]
+        seq, mask = processdata(data, svocab)
+        t1 = time.time()
+        tlist = beamsearch(model, seq, **option)
+        t2 = time.time()
+
+        if len(tlist) == 0:
+            sys.stdout.write('\n')
+            score = -10000.0
+        else:
+            best, score = tlist[0]
+            sys.stdout.write(' '.join(best[:-1]))
+            sys.stdout.write('\n')
+
+        count = count + 1
+        sys.stderr.write(str(count) + ' ')
+        sys.stderr.write(str(score) + ' ' + str(t2 - t1) + '\n')
+
+def helpinfo():
+    print 'usage:'
+    print '\trnnsearch.py <command> [<args>]'
+    print 'using rnnsearch.py train --help to see training options'
+    print 'using rnnsearch.py translate --help to see translation options'
+
+if __name__ == '__main__':
+
+    if len(sys.argv) == 1:
+        helpinfo()
+    else:
+        command = sys.argv[1]
+        if command == 'train':
+            args = parseargs_train(sys.argv[2:])
+            train(args)
+        elif command == 'translate':
+            args = parseargs_decode(sys.argv[2:])
+            decode(args)
+        else:
+            helpinfo()

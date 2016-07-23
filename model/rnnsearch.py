@@ -427,7 +427,7 @@ class rnnsearch:
 # based on groundhog's impelmentation
 def beamsearch(model, xseq, **option):
     add_if_not_exsit(option, 'beamsize', 10)
-    add_if_not_exsit(option, 'normalize', True)
+    add_if_not_exsit(option, 'normalize', False)
     add_if_not_exsit(option, 'maxlen', None)
     add_if_not_exsit(option, 'minlen', None)
 
@@ -493,6 +493,7 @@ def beamsearch(model, xseq, **option):
 
         # force to add eos symbol
         if k == maxlen - 1:
+            # copy
             eosprob = logprobs[:, eosid].copy()
             logprobs[:, :] = -numpy.inf
             logprobs[:, eosid] = eosprob

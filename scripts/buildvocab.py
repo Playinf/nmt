@@ -5,12 +5,7 @@
 import argparse
 import operator
 import cPickle
-
-def loadpkl(name):
-    fd = open(name, 'r')
-    vocab = cPickle.load(fd)
-    fd.close()
-    return vocab
+from collections import Counter
 
 def processline(line):
     return line.strip().split(' ')
@@ -82,6 +77,40 @@ def inserttokens(vocab, tokens):
 
     return vocab
 
+def coverage(voc, counts):
+    n = 0
+    total = sum(counts.itervalues())
+
+    for key in voc:
+        if key in counts:
+            n += counts[key]
+
+    return float(n) / float(total)
+
+def create_dictionary(name, lim = 0):
+    global_counter = Counter()
+    fd = open(name)
+
+    for line in fd:
+        words = line.strip().split()
+        global_counter.update(words)
+
+    combined_counter = global_counter
+
+    if lim <= 2:
+        lim = len(combined_counter) + 2
+
+    vocab_count =  combined_counter.most_common(lim - 2)
+    total_counts = sum(combined_counter.values())
+    print 100.0 * sum([count for word, count in vocab_count]) / total_counts
+
+    vocab = {'UNK': 1, '<s>': 0, '</s>': 0}
+
+    for i, (word, count) in enumerate(vocab_count):
+        vocab[word] = i + 2
+
+    return vocab
+
 def parsearg():
     desc = 'build vocabulary'
     parser = argparse.ArgumentParser(description = desc)
@@ -98,31 +127,42 @@ def parsearg():
     parser.add_argument('--alpha', action = 'store_true', help = 'desc')
     desc = 'add token'
     parser.add_argument('--token', type = str, help = desc)
+    desc = 'groundhog'
+    parser.add_argument('--groundhog', action = 'store_true', help = 'desc')
 
     return parser.parse_args()
 
-if __name__ == '__main__':
-    args = parsearg()
-
+def buildvocab(args):
     if args.char:
-        vocab = countchar(args.corpus)
+        counts = countchar(args.corpus)
     else:
-        vocab = countword(args.corpus)
+        counts = countword(args.corpus)
 
     if args.token != None:
         tokens = parsetokens(args.token)
     else:
         tokens = []
 
-    vocab = removespecial(vocab, tokens)
+    vocab = removespecial(counts, tokens)
     vocab = sortbyfreq(vocab)
     vocab = inserttokens(vocab, tokens)
 
     if args.limit != 0:
         vocab = vocab[:args.limit]
+        print 'coverage: ', coverage(vocab, counts) * 100, '%'
 
     if args.alpha:
         n = len(tokens)
         vocab = vocab[:n] + sorted(vocab[n:])
 
     save(args.output, vocab)
+
+if __name__ == '__main__':
+    args = parsearg()
+
+    if args.groundhog:
+        vocab = create_dictionary(args.corpus, args.limit)
+        save(args.output, vocab)
+    else:
+        buildvocab(args)
+

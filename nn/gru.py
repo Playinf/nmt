@@ -96,8 +96,9 @@ class gru:
                 gates = modules[0]
                 transform = modules[1]
                 r_u = gates(x + [h])
-                r = r_u[:, :r_u.shape[1] / 2]
-                u = r_u[:, -r_u.shape[1] / 2:]
+                size1 = r_u.shape[-1] / 2
+                size2 = r_u.shape[-1] - size1
+                r, u = theano.tensor.split(r_u, (size1, size2), 2, -1)
                 t = transform(x + [r * h])
 
             y = (1.0 - u) * h + u * t
