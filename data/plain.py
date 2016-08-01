@@ -3,7 +3,6 @@
 # email: playinf@stu.xmu.edu.cn
 
 import numpy
-import random
 
 def tokenize(data):
     return data.split()
@@ -17,12 +16,6 @@ def numberize(data, voc, unk = 'UNK'):
         newdata.append(idlist)
 
     return newdata
-
-def shuffle(data):
-    rnum = random.random()
-
-    for d in data:
-        random.shuffle(d, lambda : rnum)
 
 def normalize(bat):
     blen = [len(item) for item in bat]
@@ -39,9 +32,9 @@ def normalize(bat):
 
     return b, m
 
-def processdata(data, voc, eos = '<eos>'):
+def processdata(data, voc, unk = 'UNK', eos = '<eos>'):
     data = [tokenize(item) + [eos] for item in data]
-    data = numberize(data, voc)
+    data = numberize(data, voc, unk)
     data, mask = normalize(data)
 
     return data, mask

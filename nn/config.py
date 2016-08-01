@@ -59,17 +59,3 @@ def gru_option():
     merge_option(opt, 'gates', lopt)
 
     return opt
-
-def lstm_config():
-    opt = {}
-    opt['name'] = 'lstm'
-    opt['variant'] = 'fast'
-    opt['target'] = 'auto'
-    lopt = linear_option()
-    merge_option(opt, 'input-gate', lopt)
-    merge_option(opt, 'forget-gate', lopt)
-    merge_option(opt, 'output-gate', lopt)
-    merge_option(opt, 'transform', lopt)
-    merge_option(opt, 'gates', lopt)
-
-    return opt

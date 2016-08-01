@@ -48,8 +48,13 @@ def serialize(name, model):
     fd = open(name, 'w')
     option = model.option
     params = model.parameter
-    pval = [item.get_value() for item in params]
     cPickle.dump(option, fd)
+
+    pval = {}
+
+    for param in params:
+        pval[param.name] = param.get_value()
+
     cPickle.dump(pval, fd)
     fd.close()
 
@@ -59,9 +64,18 @@ def loadmodel(name):
     option = cPickle.load(fd)
     params = cPickle.load(fd)
     model = rnnsearch(**option)
+    mparams = {}
 
-    for val, param in zip(params, model.parameter):
-        param.set_value(val)
+    for param in model.parameter:
+        mparams[param.name] = param
+
+    for pname in params:
+        keys = pname.split('/')
+        newkey = ['rnnsearch'] + keys[1:]
+        newkey = '/'.join(newkey)
+
+        if newkey in mparams:
+            mparams[newkey].set_value(params[pname])
 
     fd.close()
 
@@ -142,71 +156,74 @@ def parseargs_train(args):
     parser.add_argument('--corpus', nargs = 2, help = desc)
     # training vocabulary
     desc = 'source and target vocabulary'
-    parser.add_argument('--vocabulary', nargs = 2, help = desc)
+    parser.add_argument('--vocab', nargs = 2, help = desc)
     # output model
-    desc = 'saved model'
+    desc = 'model name to save or saved model to initalize, required'
     parser.add_argument('--model', required = True, help = desc)
 
     # embedding size
-    desc = 'source and target embedding size'
+    desc = 'source and target embedding size, default 620'
     parser.add_argument('--embdim', nargs = 2, type = int, help = desc)
     # hidden size
-    desc = 'source, target and alignment hidden size'
+    desc = 'source, target and alignment hidden size, default 1000'
     parser.add_argument('--hidden', nargs = 3, type = int, help = desc)
     # maxout dim
-    desc = 'maxout hidden dimension'
-    parser.add_argument('--maxhid', default = 500, type = int, help = desc)
+    desc = 'maxout hidden dimension, default 500'
+    parser.add_argument('--maxhid', type = int, help = desc)
     # maxout number
-    desc = 'maxout number'
+    desc = 'maxout number, default 2'
     parser.add_argument('--maxpart', default = 2, type = int, help = desc)
     # deepout dim
-    desc = 'deepout hidden dimension'
-    parser.add_argument('--deephid', default = 620, type = int, help = desc)
+    desc = 'deepout hidden dimension, default 620'
+    parser.add_argument('--deephid', type = int, help = desc)
 
     # epoch
-    desc = 'maximum training epoch'
-    parser.add_argument('--maxepoch', default = 10, type = int, help = desc)
+    desc = 'maximum training epoch, default 5'
+    parser.add_argument('--maxepoch', type = int, help = desc)
     # learning rate
-    desc = 'learning rate'
-    parser.add_argument('--alpha', default = 1e-4, type = float, help = desc)
+    desc = 'learning rate, default 5e-4'
+    parser.add_argument('--alpha', type = float, help = desc)
     # momentum
-    desc = 'momentum'
-    parser.add_argument('--momentum', default = 0, type = float, help = desc)
+    desc = 'momentum, default 0.0'
+    parser.add_argument('--momentum', type = float, help = desc)
     # batch
-    desc = 'batch size'
-    parser.add_argument('--batch', type = int, default = 128, help = desc)
+    desc = 'batch size, default 128'
+    parser.add_argument('--batch', type = int, help = desc)
     # training algorhtm
-    desc = 'optimizer'
+    desc = 'optimizer, default rmsprop'
     parser.add_argument('--optimizer', type = str, help = desc)
     # gradient renormalization
-    desc = 'gradient renormalization'
-    parser.add_argument('--norm', type = float, default = 1.0, help = desc)
+    desc = 'gradient renormalization, default 1.0'
+    parser.add_argument('--norm', type = float, help = desc)
     # early stopping
-    desc = 'early stopping iteration'
-    parser.add_argument('--stop', type = int, default = 0, help = desc)
+    desc = 'early stopping iteration, default 0'
+    parser.add_argument('--stop', type = int, help = desc)
     # decay factor
-    desc = 'decay factor'
-    parser.add_argument('--decay', type = float, default = 0.5, help = desc)
+    desc = 'decay factor, default 0.5'
+    parser.add_argument('--decay', type = float, help = desc)
+    # random seed
+    desc = 'random seed, default 1234'
+    parser.add_argument('--seed', type = int, help = desc)
 
     # compute bit per cost
     desc = 'compute bit per cost on validate dataset'
     parser.add_argument('--bpc', action = 'store_true', help = desc)
     # validate data
     desc = 'validate dataset'
-    parser.add_argument('--validate', type = str, default = None, help = desc)
+    parser.add_argument('--validate', type = str, help = desc)
     # reference
     desc = 'reference data'
     parser.add_argument('--ref', type = str, nargs = '+', help = desc)
 
     # save frequency
-    desc = 'save frequency'
-    parser.add_argument('--freq', type = int, default = 1000, help = desc)
+    desc = 'save frequency, default 1000'
+    parser.add_argument('--freq', type = int, help = desc)
     # sample frequency
-    desc = 'sample frequency'
-    parser.add_argument('--sfreq', type = int, default = 50, help = desc)
+    desc = 'sample frequency, default 50'
+    parser.add_argument('--sfreq', type = int, help = desc)
     # validate frequency
-    desc = 'validate frequency'
-    parser.add_argument('--vfreq', type = int, default = 1000, help = desc)
+    desc = 'validate frequency, default 1000'
+    parser.add_argument('--vfreq', type = int, help = desc)
 
     return parser.parse_args(args)
 
@@ -233,67 +250,134 @@ def parseargs_decode(args):
 
     return parser.parse_args(args)
 
+# default options
 def getoption():
     option = {}
 
+    # training corpus and vocabulary
+    option['corpus'] = None
+    option['vocab'] = None
+
+    # model parameters
     option['embdim'] = [620, 620]
     option['hidden'] = [1000, 1000, 1000]
     option['maxpart'] = 2
     option['maxhid'] = 500
     option['deephid'] = 620
 
+    # tuning options
+    option['alpha'] = 5e-4
+    option['batch'] = 128
+    option['momentum'] = 0.0
+    option['optimizer'] = 'rmsprop'
+    option['variant'] = 'graves'
+    option['norm'] = 1.0
+    option['stop'] = 0
+    option['decay'] = 0.5
+
+    # runtime information
     option['cost'] = 0
     option['count'] = 0
     option['epoch'] = 0
-    option['maxepoch'] = 10
-    option['alpha'] = 1e-4
-    option['batch'] = 128
-    option['optimizer'] = 'rmsprop'
-    option['variant'] = 'graves'
+    option['maxepoch'] = 5
+    option['freq'] = 1000
+    option['vfreq'] = 1000
+    option['sfreq'] = 50
+    option['seed'] = 1234
+    option['validate'] = None
+    option['ref'] = None
 
     return option
 
+def override_if_not_none(option, args, key):
+    value = args.__dict__[key]
+    option[key] = value if value != None else option[key]
+
+# override default options
 def override(option, args):
-    if args.corpus == None:
+
+    # training corpus
+    if args.corpus == None and option['corpus'] == None:
         raise RuntimeError('error: no training corpus specified')
-    if args.vocabulary == None:
+
+    # vocabulary
+    if args.vocab == None and option['vocab'] == None:
         raise RuntimeError('error: no training vocabulary specified')
-    scorpus = args.corpus[0]
-    tcorpus = args.corpus[1]
-    svocab = loadvocab(args.vocabulary[0])
-    tvocab = loadvocab(args.vocabulary[1])
-    isvocab = invertvoc(svocab)
-    itvocab = invertvoc(tvocab)
 
-    option['source_eos_id'] = len(isvocab)
-    option['target_eos_id'] = len(itvocab)
+    override_if_not_none(option, args, 'corpus')
 
-    option['eos'] = '<eos>'
-    svocab['<eos>'] = option['source_eos_id']
-    tvocab['<eos>'] = option['target_eos_id']
-    isvocab[option['source_eos_id']] = '<eos>'
-    itvocab[option['target_eos_id']] = '<eos>'
+    # vocabulary and model paramters cannot be overrided
+    if option['vocab'] == None:
+        option['vocab'] = args.vocab
+        svocab = loadvocab(args.vocab[0])
+        tvocab = loadvocab(args.vocab[1])
+        isvocab = invertvoc(svocab)
+        itvocab = invertvoc(tvocab)
 
-    if args.embdim != None:
-        option['embdim'] = args.embdim
+        option['source_eos_id'] = len(isvocab)
+        option['target_eos_id'] = len(itvocab)
 
-    if args.hidden != None:
-        option['hidden'] = args.hidden
+        option['eos'] = '<eos>'
+        svocab['<eos>'] = option['source_eos_id']
+        tvocab['<eos>'] = option['target_eos_id']
+        isvocab[option['source_eos_id']] = '<eos>'
+        itvocab[option['target_eos_id']] = '<eos>'
 
-    if args.optimizer != None:
-        option['optimizer'] = args.optimizer
+        option['vocabulary'] = [[svocab, isvocab], [tvocab, itvocab]]
 
-    option['maxhid'] = args.maxhid
-    option['maxpart'] = args.maxpart
-    option['deephid'] = args.deephid
+        # model parameters
+        override_if_not_none(option, args, 'embdim')
+        override_if_not_none(option, args, 'hidden')
+        override_if_not_none(option, args, 'maxhid')
+        override_if_not_none(option, args, 'maxpart')
+        override_if_not_none(option, args, 'deephid')
 
-    option['corpus'] = [scorpus, tcorpus]
-    option['vocabulary'] = [[svocab, isvocab], [tvocab, itvocab]]
-    option['alpha'] = args.alpha
-    option['maxepoch'] = args.maxepoch
-    option['momentum'] = args.momentum
-    option['batch'] = args.batch
-    option['norm'] = args.norm
+    # training options
+    override_if_not_none(option, args, 'maxepoch')
+    override_if_not_none(option, args, 'alpha')
+    override_if_not_none(option, args, 'momentum')
+    override_if_not_none(option, args, 'batch')
+    override_if_not_none(option, args, 'optimizer')
+    override_if_not_none(option, args, 'norm')
+    override_if_not_none(option, args, 'stop')
+    override_if_not_none(option, args, 'decay')
+
+    # runtime information
+    override_if_not_none(option, args, 'validate')
+    override_if_not_none(option, args, 'ref')
+    override_if_not_none(option, args, 'freq')
+    override_if_not_none(option, args, 'vfreq')
+    override_if_not_none(option, args, 'sfreq')
+    override_if_not_none(option, args, 'seed')
+
+def print_option(option):
+    print ''
+    print 'options'
+
+    print 'corpus:', option['corpus']
+    print 'vocab:', option['vocab']
+
+    print 'embdim:', option['embdim']
+    print 'hidden:', option['hidden']
+    print 'maxhid:', option['maxhid']
+    print 'maxpart:', option['maxpart']
+    print 'deephid:', option['deephid']
+
+    print 'maxepoch:', option['maxepoch']
+    print 'alpha:', option['alpha']
+    print 'momentum:', option['momentum']
+    print 'batch:', option['batch']
+    print 'optimizer:', option['optimizer']
+    print 'norm:', option['norm']
+    print 'stop:', option['stop']
+    print 'decay:', option['decay']
+
+    print 'validate:', option['validate']
+    print 'ref:', option['ref']
+    print 'freq:', option['freq']
+    print 'vfreq:', option['vfreq']
+    print 'sfreq:', option['sfreq']
+    print 'seed:', option['seed']
 
 def skipstream(stream, count):
     for i in range(count):
@@ -314,12 +398,17 @@ def train(args):
     else:
         init = True
 
-    if args.ref:
-        references = loadreferences(args.ref)
+    override(option, args)
+    print_option(option)
+
+    # set seed
+    numpy.random.seed(option['seed'])
+
+    if option['ref']:
+        references = loadreferences(option['ref'])
     else:
         references = None
 
-    override(option, args)
     svocabs, tvocabs = option['vocabulary']
     svocab, isvocab = svocabs
     tvocab, itvocab = tvocabs
@@ -347,7 +436,7 @@ def train(args):
     trainer = optimizer(model, **toption)
     alpha = option['alpha']
 
-    print parameters(model.parameter)
+    print 'parameters:', parameters(model.parameter)
 
     best_score = 0.0
 
@@ -356,17 +445,10 @@ def train(args):
         for data in stream:
             xdata, xmask = processdata(data[0], svocab)
             ydata, ymask = processdata(data[1], tvocab)
+
             t1 = time.time()
             cost, norm = trainer.optimize(xdata, xmask, ydata, ymask)
-
-            if not numpy.isnan(norm) or norm < 1000:
-                trainer.update(alpha = alpha)
-            elif numpy.isnan(norm):
-                print 'warning: nan occured, restore parameters'
-                model = loadmodel('nmt.autosave.pkl')
-            else:
-                print 'not updating parameter', norm
-
+            trainer.update(alpha = alpha)
             t2 = time.time()
 
             option['count'] += 1
@@ -379,34 +461,27 @@ def train(args):
             option['cost'] = totcost
 
             # save model
-            if count % args.freq == 0:
+            if count % option['freq'] == 0:
                 svars = [p.get_value() for p in trainer.parameter]
                 model.option = option
                 model.option['shared'] = svars
                 filename = os.path.join(pathname, modelname + '.autosave.pkl')
                 serialize(filename, model)
 
-            if count % args.vfreq == 0:
-                if args.bpc:
-                    for ref in args.ref:
-                        bpc = validate(args.validate, ref, model, batch)
-                    if bpc:
-                        print count, 'bpc:', bpc
-
-                if args.validate and references:
-                    trans = translate(model, args.validate)
+            if count % option['vfreq'] == 0:
+                if option['validate'] and references:
+                    trans = translate(model, option['validate'])
                     bleu_score = bleu(trans, references)
                     print 'bleu:', bleu_score
                     if bleu_score > best_score:
                         best_score = bleu_score
-                        svars = [p.get_value() for p in trainer.parameter]
                         model.option = option
-                        model.option['shared'] = svars
+                        model.option['shared'] = False
                         bestname = modelname + '.best.pkl'
                         filename = os.path.join(pathname, bestname)
                         serialize(filename, model)
 
-            if count % args.sfreq == 0:
+            if count % option['sfreq'] == 0:
                 ind = numpy.random.randint(0, batch)
                 sdata = data[0][ind]
                 tdata = data[1][ind]
@@ -425,21 +500,14 @@ def train(args):
 
         print '--------------------------------------------------'
 
-        if args.bpc:
-            for ref in args.ref:
-                bpc = validate(args.validate, ref, model, batch)
-                if bpc:
-                    print 'bpc:', bpc
-
-        if args.validate and references:
-            trans = translate(model, args.validate)
+        if option['vfreq'] and references:
+            trans = translate(model, option['validate'])
             bleu_score = bleu(trans, references)
             print i + 1, 'bleu:', bleu_score
             if bleu_score > best_score:
                 best_score = bleu_score
-                svars = [p.get_value() for p in trainer.parameter]
                 model.option = option
-                model.option['shared'] = svars
+                model.option['shared'] = False
                 bestname = modelname + '.best.pkl'
                 filename = os.path.join(pathname, bestname)
                 serialize(filename, model)
@@ -448,8 +516,8 @@ def train(args):
         print '--------------------------------------------------'
 
         # early stopping
-        if i >= args.stop:
-            alpha = alpha * args.decay
+        if i >= option['stop']:
+            alpha = alpha * option['decay']
 
         stream.reset()
         option['epoch'] = i + 1
@@ -457,11 +525,16 @@ def train(args):
         option['alpha'] = alpha
         model.option = option
 
-        filename = modelname + '.iter-' + str(option['epoch']) + '.pkl'
-        filename = os.path.join(pathname, filename)
+        # update autosave
+        filename = os.path.join(pathname, modelname + '.autosave.pkl')
         svars = [p.get_value() for p in trainer.parameter]
         model.option = option
         model.option['shared'] = svars
+        serialize(filename, model)
+        # save model
+        filename = modelname + '.iter-' + str(option['epoch']) + '.pkl'
+        filename = os.path.join(pathname, filename)
+        model.option['shared'] = False
         serialize(filename, model)
 
     stream.close()
@@ -512,12 +585,13 @@ def helpinfo():
     print 'using rnnsearch.py translate --help to see translation options'
 
 if __name__ == '__main__':
-
     if len(sys.argv) == 1:
         helpinfo()
     else:
         command = sys.argv[1]
         if command == 'train':
+            print 'training command:'
+            print ' '.join(sys.argv)
             args = parseargs_train(sys.argv[2:])
             train(args)
         elif command == 'translate':
