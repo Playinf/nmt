@@ -12,10 +12,10 @@ from utils import update_option, add_parameters
 # input_size: dimension of x
 # output_size: dimension of y
 # available options:
-# 1. name: str, default 'feedforward'
+# 1. name: str, default 'maxout'
 # 2. bias: boolean, True to use bias, False to not use bias
 # 3. weight: boolean, True stands for Wx, False stands for xW
-# 4. target: target device, default theano.config.device
+# 4. target: target device, default 'auto'
 class maxout:
 
     def __init__(self, input_size, output_size, **option):

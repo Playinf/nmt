@@ -16,7 +16,7 @@ from utils import update_option
 # 2. bias: boolean, True to use bias, False to not use bias
 # 3. weight: boolean, True stands for Wx, False stands for xW
 # 4. function: activation function, default: theano.tensor.nnet.sigmoid
-# 5. target: target device, default theano.config.device
+# 5. target: target device, default 'auto'
 class feedforward:
 
     def __init__(self, input_size, output_size, **option):

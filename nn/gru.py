@@ -12,16 +12,16 @@ from utils import extract_option, add_if_not_exsit
 # gated recurrent unit
 # available options:
 # 1. name
-# 2. variant: fast or standard
-# 3. update-gate/weight: only works when variant == standard
-# 4. update-gate/bias: only works when variant == standard
-# 5. reset-gate/weight: only works when variant == standard
-# 6. reset-gate/bias: only works when variant == standard
-# 7. gates/weight: only works when variant == fast
-# 8. gates/bias: only works when variant == fast
+# 2. variant: 'tied-weight' or 'standard'
+# 3. update-gate/weight: only works when variant == 'standard'
+# 4. update-gate/bias: only works when variant == 'standard'
+# 5. reset-gate/weight: only works when variant == 'standard'
+# 6. reset-gate/bias: only works when variant == 'standard'
+# 7. gates/weight: only works when variant == 'tied-weight'
+# 8. gates/bias: only works when variant == 'tiede-weigth'
 # 9. transform/weight
 # 10. transform/bias
-# 11. target: target device, default: theano.config.device
+# 11. target: target device, default: 'auto'
 class gru:
 
     def __init__(self, input_size, output_size, **option):

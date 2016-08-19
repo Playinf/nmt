@@ -472,7 +472,7 @@ def train(args):
                 if option['validate'] and references:
                     trans = translate(model, option['validate'])
                     bleu_score = bleu(trans, references)
-                    print 'bleu:', bleu_score
+                    print 'bleu: %2.4f' % bleu_score
                     if bleu_score > best_score:
                         best_score = bleu_score
                         model.option = option
@@ -503,7 +503,7 @@ def train(args):
         if option['vfreq'] and references:
             trans = translate(model, option['validate'])
             bleu_score = bleu(trans, references)
-            print i + 1, 'bleu:', bleu_score
+            print 'iter: %d, bleu: %2.4f' % (i + 1, bleu_score)
             if bleu_score > best_score:
                 best_score = bleu_score
                 model.option = option
@@ -531,11 +531,8 @@ def train(args):
         model.option = option
         model.option['shared'] = svars
         serialize(filename, model)
-        # save model
-        filename = modelname + '.iter-' + str(option['epoch']) + '.pkl'
-        filename = os.path.join(pathname, filename)
-        model.option['shared'] = False
-        serialize(filename, model)
+
+    print 'best(bleu): %2.4f' % best_score
 
     stream.close()
 
@@ -595,6 +592,8 @@ if __name__ == '__main__':
             args = parseargs_train(sys.argv[2:])
             train(args)
         elif command == 'translate':
+            sys.stderr.write(' '.join(sys.argv))
+            sys.stderr.write('\n')
             args = parseargs_decode(sys.argv[2:])
             decode(args)
         else:

@@ -15,7 +15,7 @@ from utils import update_option, add_parameters, uniform_tensor
 # 1. name: str, default 'embedding'
 # 2. bias: boolean, True to use bias, False to not use bias, default False
 # 3. init: initialize embedding
-# 4. target: target device, default theano.config.device
+# 4. target: target device, default 'auto'
 class embedding:
 
     def __init__(self, num, dim, **option):

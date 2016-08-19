@@ -11,7 +11,7 @@ def linear_option():
     opt['name'] = 'linear'
     opt['weight'] = True
     opt['bias'] = True
-    opt['variant'] = 'fast'
+    opt['variant'] = 'standard'
     opt['target'] = 'auto'
 
     return opt
@@ -30,7 +30,7 @@ def feedforward_option():
     opt['name'] = 'feedforward'
     opt['weight'] = True
     opt['bias'] = True
-    opt['variant'] = 'fast'
+    opt['variant'] = 'standard'
     opt['function'] = theano.tensor.nnet.sigmoid
     opt['target'] = 'auto'
 
@@ -42,7 +42,7 @@ def maxout_option():
     opt['maxpart'] = 2
     opt['weight'] = True
     opt['bias'] = True
-    opt['variant'] = 'fast'
+    opt['variant'] = 'standard'
     opt['target'] = 'auto'
 
     return opt
@@ -50,7 +50,7 @@ def maxout_option():
 def gru_option():
     opt = {}
     opt['name'] = 'gru'
-    opt['variant'] = 'fast'
+    opt['variant'] = 'standard'
     opt['target'] = 'auto'
     lopt = linear_option()
     merge_option(opt, 'reset-gate', lopt)
