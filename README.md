@@ -43,10 +43,14 @@ python scripts/build_dictionary.py zh.txt en.txt align.txt dict.zh-en
   python rnnsearch.py translate --model nmt.best.pkl < input > translation
 ```
 ### Sampling
+Warning: This feature is not available in current version, but available in
+old version, will be implemented soon
 ```
   python rnnsearch.py sample --model nmt.best.pkl < input > examples
 ```
 ### UNK replacement
+Warning: This feature is not available in current version, but available in
+old version, will be implemented directly in decoding
 ```
   python rnnsearch.py replace --model nmt.best.pkl --text input translation
     --dictionary dict.zh-en > newtranslation
@@ -59,6 +63,7 @@ python scripts/build_dictionary.py zh.txt en.txt align.txt dict.zh-en
 ### Convert Trained Models
 Models trained by GroundHog can be converted to our format using convert.py,
 only support RNNsearch architecture
+Warning: This script only worked for old versions
 ```
 python scripts/convert.py --state search_state.pkl --model search_model.npz
                           --output nmt.pkl

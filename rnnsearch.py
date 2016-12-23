@@ -14,6 +14,7 @@ from metric import bleu
 from optimizer import optimizer
 from data import textreader, textiterator, processdata, getlen
 from model.rnnsearch import rnnsearch, beamsearch, batchsample
+from ops import random_uniform_initializer, trainable_variables
 
 
 def loadvocab(file):
@@ -29,14 +30,6 @@ def invertvoc(vocab):
         v[idx] = k
 
     return v
-
-
-def uniform(params, lower, upper, dtype="float32"):
-
-    for p in params:
-        s = p.get_value().shape
-        v = numpy.random.uniform(lower, upper, s).astype(dtype)
-        p.set_value(v)
 
 
 def parameters(params):
@@ -209,7 +202,7 @@ def parseargs_train(args):
     msg = "validation dataset"
     parser.add_argument("--validation", type=str, help=msg)
     msg = "reference data"
-    parser.add_argument("--ref", type=str, nargs="+", help=msg)
+    parser.add_argument("--references", type=str, nargs="+", help=msg)
 
     # data processing
     msg = "sort batches"
@@ -281,27 +274,6 @@ def parseargs_sample(args):
     return parser.parse_args(args)
 
 
-def parseargs_replace(args):
-    msg = "replace unk symbol"
-    usage = "rnnsearch.py replace [<args>] [-h | --help]"
-    parser = argparse.ArgumentParser(description=msg, usage=usage)
-
-    msg = "trained models"
-    parser.add_argument("--model", required=True, nargs="+", help=msg)
-    msg = "source text and translation file"
-    parser.add_argument("--text", required=True, nargs=2, help=msg)
-    msg = "dictionary used to replace unk"
-    parser.add_argument("--dictionary", type=str, help=msg)
-    msg = "replacement heuristic (0: copy, 1: replace, 2: heuristic replace)"
-    parser.add_argument("--heuristic", type=int, default=1, help=msg)
-    msg = "batch size"
-    parser.add_argument("--batch", type=int, default=128, help=msg)
-    msg = "use arithmetic mean instead of geometric mean"
-    parser.add_argument("--arithmetic", action="store_true", help=msg)
-
-    return parser.parse_args(args)
-
-
 # default options
 def getoption():
     option = {}
@@ -341,7 +313,7 @@ def getoption():
     option["sfreq"] = 50
     option["seed"] = 1234
     option["validation"] = None
-    option["ref"] = None
+    option["references"] = None
     option["bleu"] = 0.0
     option["indices"] = None
 
@@ -420,7 +392,7 @@ def override(option, args):
 
     # runtime information
     override_if_not_none(option, args, "validation")
-    override_if_not_none(option, args, "ref")
+    override_if_not_none(option, args, "references")
     override_if_not_none(option, args, "freq")
     override_if_not_none(option, args, "vfreq")
     override_if_not_none(option, args, "sfreq")
@@ -463,7 +435,7 @@ def print_option(option):
     print "decay:", option["decay"]
 
     print "validation:", option["validation"]
-    print "ref:", option["ref"]
+    print "references:", option["references"]
     print "freq:", option["freq"]
     print "vfreq:", option["vfreq"]
     print "sfreq:", option["sfreq"]
@@ -507,8 +479,8 @@ def train(args):
     # set seed
     numpy.random.seed(option["seed"])
 
-    if option["ref"]:
-        references = loadreferences(option["ref"])
+    if option["references"]:
+        references = loadreferences(option["references"])
     else:
         references = None
 
@@ -540,14 +512,13 @@ def train(args):
     epoch = option["epoch"]
     maxepoch = option["maxepoch"]
 
-    model = rnnsearch(**option)
+    initializer = random_uniform_initializer(-0.08, 0.08)
+    model = rnnsearch(scope="rnnsearch", initializer=initializer, **option)
 
-    if init:
-        uniform(model.parameter, -0.08, 0.08)
-    else:
+    if not init:
         set_variables(model.parameter, params)
 
-    print "parameters:", parameters(model.parameter)
+    print "parameters:", parameters(trainable_variables())
 
     # tuning option
     toption = {}
@@ -755,100 +726,12 @@ def sample(args):
         sys.stderr.write(str(count) + " " + str(t2 - t1) + "\n")
 
 
-# unk replacement
-def replace(args):
-    num_models = len(args.model)
-    models = [None for i in range(num_models)]
-    alignments = [None for i in range(num_models)]
-    if args.dictionary:
-        mapping = load_dictionary(args.dictionary)
-        heuristic = args.heuristic
-    else:
-        heuristic = 0
-
-    for i in range(num_models):
-        option, params = loadmodel(args.model[i])
-        model = rnnsearch(**option)
-        set_variables(model.parameter, params)
-        models[i] = model
-
-    # use the first model
-    svocabs, tvocabs = models[0].option["vocabulary"]
-    unk_symbol = models[0].option["unk"]
-    eos_symbol = models[0].option["eos"]
-
-    svocab, isvocab = svocabs
-    tvocab, itvocab = tvocabs
-
-    reader = textreader(args.text, False)
-    stream = textiterator(reader, [args.batch, args.batch])
-
-    for data in stream:
-        xdata, xmask = processdata(data[0], svocab, unk_symbol, eos_symbol)
-        ydata, ymask = processdata(data[1], tvocab, unk_symbol, eos_symbol)
-
-        for i in range(num_models):
-            # compute attention score
-            alignments[i] = models[i].attention(xdata, xmask, ydata, ymask)
-
-        # ensemble, alignment: yseq * xseq * batch
-        if args.arithmetic:
-            alignment = sum(alignments) / num_models
-        else:
-            alignments = map(numpy.log, alignments)
-            alignment = numpy.exp(sum(alignments) / num_models)
-
-        #  find source word to which each target word was most aligned
-        indices = numpy.argmax(alignment, 1)
-
-        # write to output
-        for i in range(len(data[1])):
-            source_words = data[0][i].strip().split()
-            target_words = data[1][i].strip().split()
-            translation = []
-
-            for j in range(len(target_words)):
-                source_length = len(source_words)
-                word = target_words[j]
-
-                # found unk symbol
-                if word == unk_symbol:
-                    source_index = indices[j, i]
-
-                    if source_index >= source_length:
-                        translation.append(word)
-                        continue
-
-                    source_word = source_words[source_index]
-
-                    if heuristic and source_word in mapping:
-                        if heuristic == 1:
-                            translation.append(mapping[source_word])
-                        else:
-                            # source word begin with lower case letter
-                            if source_word.decode('utf-8')[0].islower():
-                                translation.append(mapping[source_word])
-                            else:
-                                translation.append(source_word)
-                    else:
-                        translation.append(source_word)
-
-                else:
-                    translation.append(word)
-
-            sys.stdout.write(" ".join(translation))
-            sys.stdout.write("\n")
-
-    stream.close()
-
-
 def helpinfo():
     print "usage:"
     print "\trnnsearch.py <command> [<args>]"
     print "use 'rnnsearch.py train --help' to see training options"
     print "use 'rnnsearch.py translate' --help to see translation options"
     print "use 'rnnsearch.py sample' --help to see sampling options"
-    print "use 'rnnsearch.py replace' --help to see unk replacement options"
 
 
 if __name__ == "__main__":
@@ -871,10 +754,5 @@ if __name__ == "__main__":
             sys.stderr.write("\n")
             args = parseargs_sample(sys.argv[2:])
             sample(args)
-        elif command == "replace":
-            sys.stderr.write(" ".join(sys.argv))
-            sys.stderr.write("\n")
-            args = parseargs_replace(sys.argv[2:])
-            replace(args)
         else:
             helpinfo()

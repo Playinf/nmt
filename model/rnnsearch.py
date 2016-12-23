@@ -2,497 +2,282 @@
 # author: Playinf
 # email: playinf@stu.xmu.edu.cn
 
+import nn
+import ops
 import numpy
 import theano
-import theano.sandbox.rng_mrg
 
-from nn import gru, gru_config
-from nn import linear, linear_config
-from nn import maxout, maxout_config
-from nn import config, variable_scope
-from nn import embedding, embedding_config
-from nn import feedforward, feedforward_config
-from utils import get_or_default, add_if_not_exsit
 from search import beam, select_nbest
 
 
-class encoder_config(config):
-    """
-    * dtype: str, default theano.config.floatX
-    * scope: str, default "encoder"
-    * forward_rnn: gru_config, config behavior of forward rnn
-    * backward_rnn: gru_config, config behavior of backward rnn
-    """
+def gru_encoder(cell, inputs, mask, initial_state=None, dtype=None):
+    if not isinstance(cell, nn.rnn_cell.gru_cell):
+        raise ValueError("only gru_cell is supported")
 
-    def __init__(self, **kwargs):
-        self.dtype = get_or_default(kwargs, "dtype", theano.config.floatX)
-        self.scope = get_or_default(kwargs, "scope", "encoder")
-        self.forward_rnn = gru_config(dtype=self.dtype, scope="forward_rnn")
-        self.backward_rnn = gru_config(dtype=self.dtype, scope="backward_rnn")
+    if isinstance(inputs, (list, tuple)):
+        raise ValueError("inputs must be a tensor, not list or tuple")
 
+    def loop_fn(inputs, mask, state):
+        output, next_state = cell(inputs, state)
+        next_state = (1.0 - mask[:, None]) * state + mask[:, None] * next_state
+        return next_state
 
-class decoder_config(config):
-    """
-    * dtype: str, default theano.config.floatX
-    * scope: str, default "decoder"
-    * init_transform: feedforward_config, config initial state transform
-    * annotation_transform: linear_config, config annotation transform
-    * state_transform: linear_config, config state transform
-    * context_transform: linear_config, config context transform
-    * rnn: gru_config, config decoder rnn
-    * maxout: maxout_config, config maxout unit
-    * deepout: linear_config, config deepout transform
-    * classify: linear_config, config classify transform
-    """
+    if initial_state is None:
+        batch = inputs.shape[1]
+        state_size = cell.state_size
+        initial_state = theano.tensor.zeros([batch, state_size], dtype=dtype)
 
-    def __init__(self, **kwargs):
-        self.dtype = get_or_default(kwargs, "dtype", theano.config.floatX)
-        self.scope = get_or_default(kwargs, "scope", "decoder")
-        self.init_transform = feedforward_config(dtype=self.dtype,
-                                                 scope="init_transform",
-                                                 activation=theano.tensor.tanh)
-        self.annotation_transform = linear_config(dtype=self.dtype,
-                                                  scope="annotation_transform")
-        self.state_transform = linear_config(dtype=self.dtype,
-                                             scope="state_transform")
-        self.context_transform = linear_config(dtype=self.dtype,
-                                               scope="context_transform")
-        self.rnn = gru_config(dtype=self.dtype, scope="rnn")
-        self.maxout = maxout_config(dtype=self.dtype, scope="maxout")
-        self.deepout = linear_config(dtypde=self.dtype, scope="deepout")
-        self.classify = linear_config(dtype=self.dtype, scope="classify")
+    seq = [inputs, mask]
+    states, update = theano.scan(loop_fn, seq, [initial_state])
+
+    return states
 
 
-class rnnsearch_config(config):
-    """
-    * dtype: str, default theano.config.floatX
-    * scope: str, default "rnnsearch"
-    * source_embedding: embedding_config, config source side embedding
-    * target_embedding: embedding_config, config target side embedding
-    * encoder: encoder_config, config encoder
-    * decoder: decoder_config, config decoder
-    """
+def encoder(inputs, mask, input_size, output_size, initial_state=None,
+            dtype=None, scope=None):
+    size = [input_size, output_size]
+    cell = nn.rnn_cell.gru_cell(size)
 
-    def __init__(self, **kwargs):
-        self.dtype = get_or_default(kwargs, "dtype", theano.config.floatX)
-        self.scope = get_or_default(kwargs, "scope", "rnnsearch")
-        self.source_embedding = embedding_config(dtype=self.dtype,
-                                                 scope="source_embedding")
-        self.target_embedding = embedding_config(dtype=self.dtype,
-                                                 scope="target_embedding")
-        self.encoder = encoder_config(dtype=self.dtype)
-        self.decoder = decoder_config(dtype=self.dtype)
+    with ops.variable_scope(scope or "encoder"):
+        with ops.variable_scope("forward"):
+            fd_states = gru_encoder(cell, inputs, mask, initial_state, dtype)
+        with ops.variable_scope("backward"):
+            inputs = inputs[::-1]
+            mask = mask[::-1]
+            bd_states = gru_encoder(cell, inputs, mask, initial_state, dtype)
+            bd_states = bd_states[::-1]
+
+    return fd_states, bd_states
 
 
-# standard rnnsearch configuration (groundhog version)
-def get_config():
-    config = rnnsearch_config()
+# precompute mapped attention states to speed up decoding
+# attention_states: [time_steps, batch, input_size]
+# outputs: [time_steps, batch, attn_size]
+def map_attention_states(attention_states, input_size, attn_size, scope=None):
+    with ops.variable_scope(scope or "attention"):
+        mapped_states = nn.linear(attention_states, [input_size, attn_size],
+                                  False, scope="attention_w")
 
-    config["*/concat"] = False
-    config["*/output_major"] = False
-
-    # embedding
-    config["source_embedding/bias/use"] = True
-    config["target_embedding/bias/use"] = True
-
-    # encoder
-    config["encoder/forward_rnn/reset_gate/bias/use"] = False
-    config["encoder/forward_rnn/update_gate/bias/use"] = False
-    config["encoder/forward_rnn/candidate/bias/use"] = True
-    config["encoder/backward_rnn/reset_gate/bias/use"] = False
-    config["encoder/backward_rnn/update_gate/bias/use"] = False
-    config["encoder/backward_rnn/candidate/bias/use"] = True
-
-    # decoder
-    config["decoder/init_transform/bias/use"] = True
-    config["decoder/annotation_transform/bias/use"] = False
-    config["decoder/state_transform/bias/use"] = False
-    config["decoder/context_transform/bias/use"] = False
-    config["decoder/rnn/reset_gate/bias/use"] = False
-    config["decoder/rnn/update_gate/bias/use"] = False
-    config["decoder/rnn/candidate/bias/use"] = True
-    config["decoder/maxout/bias/use"] = True
-    config["decoder/deepout/bias/use"] = False
-    config["decoder/classify/bias/use"] = True
-
-    return config
+    return mapped_states
 
 
-class encoder:
+def attention(query, mapped_states, state_size, attn_size, attention_mask=None,
+              scope=None):
+    with ops.variable_scope(scope or "attention"):
+        mapped_query = nn.linear(query, [state_size, attn_size], False,
+                                 scope="query_w")
 
-    def __init__(self, input_size, hidden_size, config=encoder_config()):
-        scope = config.scope
+        mapped_query = mapped_query[None, :, :]
+        hidden = mapped_query + mapped_states
 
-        with variable_scope(scope):
-            forward_encoder = gru(input_size, hidden_size, config.forward_rnn)
-            backward_encoder = gru(input_size, hidden_size,
-                                   config.backward_rnn)
+        score = nn.linear(hidden, [attn_size, 1], False, scope="attention_v")
+        score = score.reshape([score.shape[0], score.shape[1]])
 
-        params = []
-        params.extend(forward_encoder.parameter)
-        params.extend(backward_encoder.parameter)
+        exp_score = theano.tensor.exp(score)
 
-        def forward(x, mask, initstate):
-            def forward_step(x, m, h):
-                nh, states = forward_encoder(x, h)
-                nh = (1.0 - m[:, None]) * h + m[:, None] * nh
-                return [nh]
+        if attention_mask is not None:
+            exp_score = exp_score * attention_mask
 
-            def backward_step(x, m, h):
-                nh, states = backward_encoder(x, h)
-                nh = (1.0 - m[:, None]) * h + m[:, None] * nh
-                return [nh]
+        alpha = exp_score / theano.tensor.sum(exp_score, 0)
 
-            seq = [x, mask]
-            hf, u = theano.scan(forward_step, seq, [initstate])
-
-            seq = [x[::-1], mask[::-1]]
-            hb, u = theano.scan(backward_step, seq, [initstate])
-            hb = hb[::-1]
-
-            return theano.tensor.concatenate([hf, hb], 2)
-
-        self.name = scope
-        self.config = config
-        self.forward = forward
-        self.parameter = params
-
-    def __call__(self, x, mask, initstate):
-        return self.forward(x, mask, initstate)
+    return alpha[:, :, None]
 
 
-class decoder:
+def decoder(inputs, mask, initial_state, attention_states, attention_mask,
+            input_size, output_size, states_size, attn_size, dtype=None,
+            scope=None):
+    cell = nn.rnn_cell.gru_cell([[input_size, states_size], output_size])
 
-    def __init__(self, emb_size, shidden_size, thidden_size, ahidden_size,
-                 mhidden_size, maxpart, dhidden_size, voc_size,
-                 config=decoder_config()):
-        scope = config.scope
-        ctx_size = 2 * shidden_size
+    output_size = cell.output_size
+    dtype = dtype or inputs.dtype
 
-        with variable_scope(scope):
-            init_transform = feedforward(shidden_size, thidden_size,
-                                         config.init_transform)
-            annotation_transform = linear(ctx_size, ahidden_size,
-                                          config.annotation_transform)
-            state_transform = linear(thidden_size, ahidden_size,
-                                     config.state_transform)
-            context_transform = linear(ahidden_size, 1,
-                                       config.context_transform)
-            rnn = gru([emb_size, ctx_size], thidden_size, config.rnn)
-            maxout_transform = maxout([thidden_size, emb_size, ctx_size],
-                                      mhidden_size, maxpart, config.maxout)
-            deepout_transform = linear(mhidden_size, dhidden_size,
-                                       config.deepout)
-            classify_transform = linear(dhidden_size, voc_size,
-                                        config.classify)
+    def loop_fn(inputs, mask, state, attn_states, attn_mask, mapped_states):
+        alpha = attention(state, mapped_states, output_size, attn_size,
+                          attn_mask)
+        context = theano.tensor.sum(alpha * attn_states, 0)
+        output, next_state = cell([inputs, context], state)
+        next_state = (1.0 - mask[:, None]) * state + mask[:, None] * next_state
 
-        params = []
-        params.extend(init_transform.parameter)
-        params.extend(annotation_transform.parameter)
-        params.extend(state_transform.parameter)
-        params.extend(context_transform.parameter)
-        params.extend(rnn.parameter)
-        params.extend(maxout_transform.parameter)
-        params.extend(deepout_transform.parameter)
-        params.extend(classify_transform.parameter)
+        return [next_state, context]
 
-        def attention(state, xmask, mapped_annotation):
-            mapped_state = state_transform(state)
-            hidden = theano.tensor.tanh(mapped_state + mapped_annotation)
-            score = context_transform(hidden)
-            score = score.reshape((score.shape[0], score.shape[1]))
-            # softmax over masked batch
-            alpha = theano.tensor.exp(score)
-            alpha = alpha * xmask
-            alpha = alpha / theano.tensor.sum(alpha, 0)
-            return alpha
 
-        def compute_initstate(annotation):
-            hb = annotation[0, :, -annotation.shape[2] / 2:]
-            inis = init_transform(hb)
-            mapped_annotation = annotation_transform(annotation)
+    with ops.variable_scope(scope or "decoder"):
+        mapped_states = map_attention_states(attention_states, states_size,
+                                             attn_size)
+        seq = [inputs, mask]
+        outputs_info = [initial_state, None]
+        non_seq = [attention_states, attention_mask, mapped_states]
+        (states, contexts), updates = theano.scan(loop_fn, seq, outputs_info,
+                                                  non_seq)
 
-            return inis, mapped_annotation
-
-        def compute_context(state, xmask, annotation, mapped_annotation):
-            alpha = attention(state, xmask, mapped_annotation)
-            context = theano.tensor.sum(alpha[:, :, None] * annotation, 0)
-            return [alpha, context]
-
-        def compute_probability(yemb, state, context):
-            maxhid = maxout_transform([state, yemb, context])
-            readout = deepout_transform(maxhid)
-            preact = classify_transform(readout)
-            prob = theano.tensor.nnet.softmax(preact)
-
-            return prob
-
-        def compute_state(yemb, ymask, state, context):
-            new_state, states = rnn([yemb, context], state)
-            ymask = ymask[:, None]
-            new_state = (1.0 - ymask) * state + ymask * new_state
-
-            return new_state
-
-        def compute_attention_score(yseq, xmask, ymask, annotation):
-            initstate, mapped_annotation = compute_initstate(annotation)
-
-            def step(yemb, ymask, state, xmask, annotation, mannotation):
-                outs = compute_context(state, xmask, annotation, mannotation)
-                alpha, context = outs
-                new_state = compute_state(yemb, ymask, state, context)
-                return [new_state, alpha]
-
-            seq = [yseq, ymask]
-            oinfo = [initstate, None]
-            nonseq = [xmask, annotation, mapped_annotation]
-            (states, alpha), updates = theano.scan(step, seq, oinfo, nonseq)
-
-            return alpha
-
-        def forward(yseq, xmask, ymask, annotation):
-            yshift = theano.tensor.zeros_like(yseq)
-            yshift = theano.tensor.set_subtensor(yshift[1:], yseq[:-1])
-
-            initstate, mapped_annotation = compute_initstate(annotation)
-
-            def step(yemb, ymask, state, xmask, annotation, mannotation):
-                outs = compute_context(state, xmask, annotation, mannotation)
-                alpha, context = outs
-                new_state = compute_state(yemb, ymask, state, context)
-                return [new_state, context]
-
-            seq = [yseq, ymask]
-            oinfo = [initstate, None]
-            nonseq = [xmask, annotation, mapped_annotation]
-            (states, contexts), updates = theano.scan(step, seq, oinfo, nonseq)
-
-            inis = initstate[None, :, :]
-            all_states = theano.tensor.concatenate([inis, states], 0)
-            prev_states = all_states[:-1]
-
-            maxhid = maxout_transform([prev_states, yshift, contexts])
-            readout = deepout_transform(maxhid)
-            preact = classify_transform(readout)
-            preact = preact.reshape((preact.shape[0] * preact.shape[1], -1))
-            prob = theano.tensor.nnet.softmax(preact)
-
-            return prob
-
-        self.name = scope
-        self.config = config
-        self.forward = forward
-        self.parameter = params
-        self.compute_initstate = compute_initstate
-        self.compute_context = compute_context
-        self.compute_probability = compute_probability
-        self.compute_state = compute_state
-        self.compute_attention_score = compute_attention_score
-
-    def __call__(self, yseq, xmask, ymask, annotation):
-        return self.forward(yseq, xmask, ymask, annotation)
+    return states, contexts
 
 
 class rnnsearch:
 
-    def __init__(self, config=get_config(), **option):
-        scope = config.scope
-
+    def __init__(self, **option):
+        # source and target embedding dim
         sedim, tedim = option["embdim"]
+        # source, target and attention hidden dim
         shdim, thdim, ahdim = option["hidden"]
+        # maxout hidden dim
         maxdim = option["maxhid"]
+        # maxout part
+        maxpart = option["maxpart"]
+        # deepout hidden dim
         deephid = option["deephid"]
-        k = option["maxpart"]
         svocab, tvocab = option["vocabulary"]
         sw2id, sid2w = svocab
         tw2id, tid2w = tvocab
-        svsize = len(sid2w)
-        tvsize = len(tid2w)
+        # source and target vocabulary size
+        svsize, tvsize = len(sid2w), len(tid2w)
 
-        with variable_scope(scope):
-            source_embedding = embedding(svsize, sedim,
-                                         config.source_embedding)
-            target_embedding = embedding(tvsize, tedim,
-                                         config.target_embedding)
-            rnn_encoder = encoder(sedim, shdim, config.encoder)
-            rnn_decoder = decoder(tedim, shdim, thdim, ahdim, maxdim, k,
-                                  deephid, tvsize, config.decoder)
+        dtype = theano.config.floatX
+        scope = option["scope"]
+        initializer = option["initializer"]
 
-        params = []
-        params.extend(source_embedding.parameter)
-        params.extend(target_embedding.parameter)
-        params.extend(rnn_encoder.parameter)
-        params.extend(rnn_decoder.parameter)
+        # training graph
+        with ops.variable_scope(scope, initializer=initializer, dtype=dtype):
+            src_seq = theano.tensor.imatrix("soruce_sequence")
+            src_mask = theano.tensor.matrix("soruce_sequence_mask")
+            tgt_seq = theano.tensor.imatrix("target_sequence")
+            tgt_mask = theano.tensor.matrix("target_sequence_mask")
 
-        def training_graph():
-            xseq = theano.tensor.imatrix()
-            xmask = theano.tensor.matrix()
-            yseq = theano.tensor.imatrix()
-            ymask = theano.tensor.matrix()
+            source_embedding = ops.get_variable("source_embedding",
+                                                [svsize, sedim])
+            source_bias = ops.get_variable("source_embedding_bias", [sedim])
+            target_embedding = ops.get_variable("target_embedding",
+                                                [tvsize, tedim])
+            target_bias = ops.get_variable("target_embedding_bias", [tedim])
 
-            xemb = source_embedding(xseq)
-            yemb = target_embedding(yseq)
-            initstate = theano.tensor.zeros((xemb.shape[1], shdim))
+            source_inputs = nn.embedding_lookup(source_embedding, src_seq)
+            target_inputs = nn.embedding_lookup(target_embedding, tgt_seq)
 
-            annotation = rnn_encoder(xemb, xmask, initstate)
-            probs = rnn_decoder(yemb, xmask, ymask, annotation)
+            source_inputs = source_inputs + source_bias
+            target_inputs = target_inputs + target_bias
 
-            idx = theano.tensor.arange(yseq.flatten().shape[0])
-            cost = -theano.tensor.log(probs[idx, yseq.flatten()])
-            cost = cost.reshape(yseq.shape)
-            cost = theano.tensor.sum(cost * ymask, 0)
+            outputs = encoder(source_inputs, src_mask, sedim, shdim)
+            annotation = theano.tensor.concatenate(outputs, 2)
+
+            # compute initial state for decoder
+            # first state of backward encoder
+            final_state = outputs[1][0]
+            initial_state = nn.feedforward(final_state, [shdim, thdim], True,
+                                           activation=theano.tensor.tanh,
+                                           scope="initial")
+
+            # run decoder
+            decoder_outputs = decoder(target_inputs, tgt_mask, initial_state,
+                                      annotation, src_mask, tedim, thdim,
+                                      2 * shdim, ahdim)
+            all_output, all_context = decoder_outputs
+
+            shift_inputs = theano.tensor.zeros_like(target_inputs)
+            shift_inputs = theano.tensor.set_subtensor(shift_inputs[1:],
+                                                       target_inputs[:-1])
+
+            init_state = initial_state[None, :, :]
+            all_states = theano.tensor.concatenate([init_state, all_output], 0)
+            prev_states = all_states[:-1]
+
+            features = [prev_states, shift_inputs, all_context]
+            maxhid = nn.maxout(features, [[thdim, tedim, 2 * shdim], maxdim],
+                               maxpart, True)
+            readout = nn.linear(maxhid, [maxdim, deephid], False,
+                                scope="deepout")
+            logits = nn.linear(readout, [deephid, tvsize], True,
+                               scope="logits")
+
+            logits = logits.reshape((logits.shape[0] * logits.shape[1], -1))
+            probs = theano.tensor.nnet.softmax(logits)
+
+            # compute
+            idx = theano.tensor.arange(tgt_seq.flatten().shape[0])
+            cost = -theano.tensor.log(probs[idx, tgt_seq.flatten()])
+            cost = cost.reshape(tgt_seq.shape)
+            cost = theano.tensor.sum(cost * tgt_mask, 0)
             cost = theano.tensor.mean(cost)
 
-            return [xseq, xmask, yseq, ymask], [cost]
+        training_inputs = [src_seq, src_mask, tgt_seq, tgt_mask]
+        training_outputs = [cost]
+        evaluate = theano.function(training_inputs, training_outputs)
 
-        def attention_graph():
-            xseq = theano.tensor.imatrix()
-            xmask = theano.tensor.matrix()
-            yseq = theano.tensor.imatrix()
-            ymask = theano.tensor.matrix()
+        # encoding
+        encoding_inputs = [src_seq, src_mask]
+        encoding_outputs = [annotation, initial_state]
+        encode = theano.function(encoding_inputs, encoding_outputs)
 
-            xemb = source_embedding(xseq)
-            yemb = target_embedding(yseq)
-            initstate = theano.tensor.zeros((xemb.shape[1], shdim))
+        # decoding graph
+        with ops.variable_scope(scope, reuse=True):
+            prev_words = theano.tensor.ivector("prev_words")
 
-            annotation = rnn_encoder(xemb, xmask, initstate)
-            alpha = rnn_decoder.compute_attention_score(yemb, xmask, ymask,
-                                                        annotation)
+            target_embedding = ops.get_variable("target_embedding",
+                                                [tvsize, tedim])
+            target_bias = ops.get_variable("target_embedding_bias", [tedim])
 
-            return [xseq, xmask, yseq, ymask], alpha
+            target_inputs = nn.embedding_lookup(target_embedding, prev_words)
+            target_inputs = target_inputs + target_bias
 
-        def sampling_graph():
-            seed = option["seed"]
-            seed_rng = numpy.random.RandomState(numpy.random.randint(seed))
-            tseed = seed_rng.randint(numpy.iinfo(numpy.int32).max)
-            stream = theano.sandbox.rng_mrg.MRG_RandomStreams(tseed)
-
-            xseq = theano.tensor.imatrix()
-            xmask = theano.tensor.matrix()
-            maxlen = theano.tensor.iscalar()
-
-            batch = xseq.shape[1]
-            xemb = source_embedding(xseq)
-            initstate = theano.tensor.zeros([batch, shdim])
-
-            annot = rnn_encoder(xemb, xmask, initstate)
-
-            ymask = theano.tensor.ones([batch])
-            istate, mannot = rnn_decoder.compute_initstate(annot)
-
-            def sample_step(pemb, state, xmask, ymask, annot, mannot):
-                alpha, context = rnn_decoder.compute_context(state, xmask,
-                                                             annot, mannot)
-                probs = rnn_decoder.compute_probability(pemb, state, context)
-                next_words = stream.multinomial(pvals=probs).argmax(axis=1)
-                yemb = target_embedding(next_words)
-                next_state = rnn_decoder.compute_state(yemb, ymask, state,
-                                                       context)
-                return [next_words, yemb, next_state]
-
-            iemb = theano.tensor.zeros([batch, tedim])
-
-            seqs = []
-            outputs_info = [None, iemb, istate]
-            nonseqs = [xmask, ymask, annot, mannot]
-
-            outputs, u = theano.scan(sample_step, seqs, outputs_info,
-                                     nonseqs, n_steps=maxlen)
-
-            return [xseq, xmask, maxlen], outputs[0], u
-
-        # for beamsearch
-        def encoding_graph():
-            xseq = theano.tensor.imatrix()
-            xmask = theano.tensor.matrix()
-
-            xemb = source_embedding(xseq)
-            initstate = theano.tensor.zeros((xseq.shape[1], shdim))
-            annotation = rnn_encoder(xemb, xmask, initstate)
-
-            return [xseq, xmask], annotation
-
-        def initial_state_graph():
-            annotation = theano.tensor.tensor3()
-
-            # initstate, mapped_annotation
-            outputs = rnn_decoder.compute_initstate(annotation)
-
-            return [annotation], outputs
-
-        def context_graph():
-            state = theano.tensor.matrix()
-            xmask = theano.tensor.matrix()
-            annotation = theano.tensor.tensor3()
-            mannotation = theano.tensor.tensor3()
-
-            inputs = [state, xmask, annotation, mannotation]
-            alpha, context = rnn_decoder.compute_context(*inputs)
-
-            return inputs, [context, alpha]
-
-        def probability_graph():
-            y = theano.tensor.ivector()
-            state = theano.tensor.matrix()
-            context = theano.tensor.matrix()
-
-            # 0 for initial index
-            cond = theano.tensor.neq(y, 0)
-            yemb = target_embedding(y)
+            cond = theano.tensor.neq(prev_words, 0)
             # zeros out embedding if y is 0
-            yemb = yemb * cond[:, None]
-            probs = rnn_decoder.compute_probability(yemb, state, context)
+            target_inputs = target_inputs * cond[:, None]
 
-            return [y, state, context], probs
+            cell = nn.rnn_cell.gru_cell([[tedim, 2 * shdim], thdim])
 
-        def state_graph():
-            y = theano.tensor.ivector()
-            ymask = theano.tensor.vector()
-            state = theano.tensor.matrix()
-            context = theano.tensor.matrix()
+            with ops.variable_scope("decoder"):
+                mapped_states = map_attention_states(annotation, 2 * shdim,
+                                                     ahdim)
+                alpha = attention(initial_state, mapped_states, thdim, ahdim,
+                                  src_mask)
+                context = theano.tensor.sum(alpha * annotation, 0)
+                output, next_state = cell([target_inputs, context],
+                                          initial_state)
 
-            yemb = target_embedding(y)
-            inputs = [yemb, ymask, state, context]
-            new_state = rnn_decoder.compute_state(*inputs)
+            features = [initial_state, target_inputs, context]
+            maxhid = nn.maxout(features, [[thdim, tedim, 2 * shdim], maxdim],
+                               maxpart, True)
+            readout = nn.linear(maxhid, [maxdim, deephid], False,
+                                scope="deepout")
+            logits = nn.linear(readout, [deephid, tvsize], True,
+                               scope="logits")
+            probs = theano.tensor.nnet.softmax(logits)
 
-            return [y, ymask, state, context], new_state
+        # additional functions for decoding
+        precomputation_inputs = [annotation]
+        precomputation_outputs = mapped_states
+        precompute = theano.function(precomputation_inputs,
+                                     precomputation_outputs)
 
-        def compile_function(graph_fn):
-            outputs = graph_fn()
+        alignment_inputs = [initial_state, annotation, mapped_states, src_mask]
+        alignment_outputs = [alpha, context]
+        align = theano.function(alignment_inputs, alignment_outputs)
 
-            if len(outputs) == 2:
-                inputs, outputs = outputs
-                return theano.function(inputs, outputs)
-            else:
-                inputs, outputs, updates = outputs
-                return theano.function(inputs, outputs, updates=updates)
+        prediction_inputs = [prev_words, initial_state, context]
+        prediction_outputs = probs
+        predict = theano.function(prediction_inputs, prediction_outputs)
 
+        generation_inputs = [prev_words, initial_state, context]
+        generation_outputs = next_state
+        generate = theano.function(generation_inputs, generation_outputs)
 
-        train_inputs, train_outputs = training_graph()
-
-        search_fn = []
-        search_fn.append(compile_function(encoding_graph))
-        search_fn.append(compile_function(initial_state_graph))
-        search_fn.append(compile_function(context_graph))
-        search_fn.append(compile_function(probability_graph))
-        search_fn.append(compile_function(state_graph))
-
-        self.name = scope
-        self.config = config
-        self.parameter = params
-        self.option = option
-        self.cost = train_outputs[0]
-        self.inputs = train_inputs
-        self.outputs = train_outputs
+        self.cost = cost
+        self.inputs = training_inputs
+        self.outputs = training_outputs
         self.updates = []
-        self.search = search_fn
-        self.sampler = compile_function(sampling_graph)
-        self.attention = compile_function(attention_graph)
+        self.align = align
+        self.encode = encode
+        self.predict = predict
+        self.generate = generate
+        self.evaluate = evaluate
+        self.precompute = precompute
+        self.option = option
 
 
-def beamsearch(models, seq, beamsize=10, normalize=False, maxlen=None,
-               minlen=None, arithmetic=False):
+# TODO: add UNK replacement, add batched decoding
+def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
+               maxlen=None, minlen=None, arithmetic=False, dtype=None):
     size = beamsize
+    dtype = dtype or theano.config.floatX
 
     if not isinstance(models, (list, tuple)):
         models = [models]
@@ -512,19 +297,19 @@ def beamsearch(models, seq, beamsize=10, normalize=False, maxlen=None,
         minlen = seq.shape[0] / 2
 
     # encoding source
-    mask = numpy.ones(seq.shape, "float32")
-    annotations = [model.search[0](seq, mask) for model in models]
-    istates_and_mannots = [model.search[1](annot) for annot, model in
-                           zip(annotations, models)]
+    if mask is None:
+        mask = numpy.ones(seq.shape, dtype)
 
-    # compute initial state and map annotation for fast attention
-    states = [item[0] for item in istates_and_mannots]
-    mapped_annots = [item[1] for item in istates_and_mannots]
+    annotations_and_istates = [model.encode(seq, mask) for model in models]
+    annotations = [item[0] for item in annotations_and_istates]
+    states = [item[1] for item in annotations_and_istates]
+    mapped_annots = [model.precompute(annot) for annot, model in
+                     zip(annotations, models)]
 
     initial_beam = beam(size)
     # </s>
-    initial_beam.candidate = [[0]]
-    initial_beam.score = numpy.zeros([1], "float32")
+    initial_beam.candidate = [[eosid]]
+    initial_beam.score = numpy.zeros([1], dtype)
 
     hypo_list = []
     beam_list = [initial_beam]
@@ -544,12 +329,12 @@ def beamsearch(models, seq, beamsize=10, normalize=False, maxlen=None,
         batch_mannots = map(numpy.repeat, mapped_annots, [num] * num_models,
                            [1] * num_models)
 
-        # function[2] returns (context, alpha)
-        outputs = [model.search[2](state, batch_mask, annot, mannot)
+        # align returns [alpha, context]
+        outputs = [model.align(state, annot, mannot, batch_mask)
                    for model, state, annot, mannot in
                    zip(models, states, batch_annots, batch_mannots)]
-        contexts = [item[0] for item in outputs]
-        prob_dists = [model.search[3](last_words, state, context) for
+        contexts = [item[1] for item in outputs]
+        prob_dists = [model.predict(last_words, state, context) for
                       model, state, context in zip(models, states, contexts)]
 
         # search nbest given word distribution
@@ -588,9 +373,7 @@ def beamsearch(models, seq, beamsize=10, normalize=False, maxlen=None,
         states = select_nbest(states, batch_indices)
         contexts = select_nbest(contexts, batch_indices)
 
-        batch_ymask = numpy.ones((num,), "float32")
-
-        states = [model.search[-1](last_words, batch_ymask, state, context)
+        states = [model.generate(last_words, state, context)
                   for model, state, context in zip(models, states, contexts)]
 
         beam_list.append(next_beam)
@@ -598,7 +381,7 @@ def beamsearch(models, seq, beamsize=10, normalize=False, maxlen=None,
     # postprocessing
     if len(hypo_list) == 0:
         score_list = [0.0]
-        hypo_list = [["</s>"]]
+        hypo_list = [[eosid]]
     else:
         score_list = [item[1] for item in hypo_list]
         # exclude bos symbol
@@ -625,40 +408,5 @@ def beamsearch(models, seq, beamsize=10, normalize=False, maxlen=None,
     return output
 
 
-def batchsample(model, xseq, xmask, **option):
-    add_if_not_exsit(option, "maxlen", None)
-    maxlen = option["maxlen"]
-
-    sampler = model.sampler
-
-    vocabulary = model.option["vocabulary"]
-    eos = model.option["eos"]
-    vocab = vocabulary[1][1]
-    eosid = vocabulary[1][0][eos]
-
-    if maxlen == None:
-        maxlen = int(len(xseq) * 1.5)
-
-    words = sampler(xseq, xmask, maxlen)
-    trans = words.astype("int32")
-
-    samples = []
-
-    for i in range(trans.shape[1]):
-        example = trans[:, i]
-        # remove eos symbol
-        index = -1
-
-        for i in range(len(example)):
-            if example[i] == eosid:
-                index = i
-                break
-
-        if index >= 0:
-            example = example[:index]
-
-        example = map(lambda x: vocab[x], example)
-
-        samples.append(example)
-
-    return samples
+def batchsample(**kwargs):
+    raise NotImplemented("batchsample currently not avaiable")
