@@ -36,6 +36,12 @@ def loadmodel(name):
         opt["references"] = opt["ref"]
         del(opt["ref"])
 
+    if not "bosid" in opt:
+        opt["bosid"] = 0
+
+    if not "eosid" in opt:
+        itvocab = opt["vocabulary"][1][1]
+        opt["eosid"] = len(itvocab) - 1
 
     name_or_param = cPickle.load(fd)
 

@@ -209,10 +209,13 @@ def main(args):
     isvocab = invertvoc(svocab)
     itvocab = invertvoc(tvocab)
 
-    svocab[option["eos"]] = option["source_eos_id"]
-    tvocab[option["eos"]] = option["target_eos_id"]
-    isvocab[option["source_eos_id"]] = option["eos"]
-    itvocab[option["target_eos_id"]] = option["eos"]
+    svocab[option["eos"]] = state["null_sym_source"]
+    tvocab[option["eos"]] = state["null_sym_target"]
+    isvocab[state["null_sym_source"]] = option["eos"]
+    itvocab[state["null_sym_target"]] = option["eos"]
+
+    option["bosid"] = 0
+    option["eosid"] = state["null_sym_target"]
 
     if len(isvocab) != state["n_sym_source"]:
         raise ValueError("source vocab size not match")

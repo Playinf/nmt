@@ -19,8 +19,9 @@ def gru_encoder(cell, inputs, mask, initial_state=None, dtype=None):
         raise ValueError("inputs must be a tensor, not list or tuple")
 
     def loop_fn(inputs, mask, state):
+        mask = mask[:, None]
         output, next_state = cell(inputs, state)
-        next_state = (1.0 - mask[:, None]) * state + mask[:, None] * next_state
+        next_state = (1.0 - mask) * state + mask * next_state
         return next_state
 
     if initial_state is None:
@@ -29,7 +30,7 @@ def gru_encoder(cell, inputs, mask, initial_state=None, dtype=None):
         initial_state = theano.tensor.zeros([batch, state_size], dtype=dtype)
 
     seq = [inputs, mask]
-    states, update = theano.scan(loop_fn, seq, [initial_state])
+    states, updates = theano.scan(loop_fn, seq, [initial_state])
 
     return states
 
@@ -81,7 +82,7 @@ def attention(query, mapped_states, state_size, attn_size, attention_mask=None,
 
         alpha = exp_score / theano.tensor.sum(exp_score, 0)
 
-    return alpha[:, :, None]
+    return alpha
 
 
 def decoder(inputs, mask, initial_state, attention_states, attention_mask,
@@ -93,11 +94,12 @@ def decoder(inputs, mask, initial_state, attention_states, attention_mask,
     dtype = dtype or inputs.dtype
 
     def loop_fn(inputs, mask, state, attn_states, attn_mask, mapped_states):
+        mask = mask[:, None]
         alpha = attention(state, mapped_states, output_size, attn_size,
                           attn_mask)
-        context = theano.tensor.sum(alpha * attn_states, 0)
+        context = theano.tensor.sum(alpha[:, :, None] * attn_states, 0)
         output, next_state = cell([inputs, context], state)
-        next_state = (1.0 - mask[:, None]) * state + mask[:, None] * next_state
+        next_state = (1.0 - mask) * state +  mask * next_state
 
         return [next_state, context]
 
@@ -244,7 +246,7 @@ class rnnsearch:
                                                      ahdim)
                 alpha = attention(initial_state, mapped_states, thdim, ahdim,
                                   src_mask)
-                context = theano.tensor.sum(alpha * annotation, 0)
+                context = theano.tensor.sum(alpha[:, :, None] * annotation, 0)
                 output, next_state = cell([inputs, context], initial_state)
                 probs = prediction(inputs, initial_state, context)
 
@@ -277,7 +279,7 @@ class rnnsearch:
 
             def sampling_loop(inputs, state):
                 alpha = attention(state, mapped_states, shdim, ahdim, src_mask)
-                context = theano.tensor.sum(alpha * annotation, 0)
+                context = theano.tensor.sum(alpha[:, :, None] * annotation, 0)
                 probs = prediction(inputs, state, context)
                 next_words = stream.multinomial(pvals=probs).argmax(axis=1)
                 new_inputs = nn.embedding_lookup(target_embedding, next_words)
@@ -303,17 +305,19 @@ class rnnsearch:
 
         # attention graph, this feature is optional
         with ops.variable_scope(scope, reuse=True):
-            def attention_loop(inputs, state):
+            def attention_loop(inputs, mask, state):
+                mask = mask[:, None]
                 alpha = attention(state, mapped_states, shdim, ahdim, src_mask)
-                context = theano.tensor.sum(alpha * annotation, 0)
+                context = theano.tensor.sum(alpha[:, :, None] * annotation, 0)
                 output, next_state = cell([inputs, context], state)
+                next_state = (1.0 - mask) * state + mask * next_state
 
-                return [alpha, state]
+                return [alpha, next_state]
 
             with ops.variable_scope("decoder"):
-                seq = [target_inputs]
+                seq = [target_inputs, tgt_mask]
                 outputs_info = [None, initial_state]
-                outputs, update = theano.scan(attention_loop, seq,
+                outputs, updates = theano.scan(attention_loop, seq,
                                               outputs_info)
                 attention_score = outputs[0]
 
@@ -348,10 +352,9 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
     num_models = len(models)
 
     # get vocabulary from the first model
-    vocabulary = models[0].option["vocabulary"]
-    eos_symbol = models[0].option["eos"]
-    vocab = vocabulary[1][1]
-    eosid = vocabulary[1][0][eos_symbol]
+    vocab = models[0].option["vocabulary"][1][1]
+    eosid = models[0].option["eosid"]
+    bosid = models[0].option["bosid"]
 
     if maxlen == None:
         maxlen = seq.shape[0] * 3
@@ -370,8 +373,8 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
                      zip(annotations, models)]
 
     initial_beam = beam(size)
-    # </s>
-    initial_beam.candidate = [[eosid]]
+    # bosid must be 0
+    initial_beam.candidate = [[bosid]]
     initial_beam.score = numpy.zeros([1], dtype)
 
     hypo_list = []

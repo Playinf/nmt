@@ -35,27 +35,32 @@ python scripts/build_dictionary.py zh.txt en.txt align.txt dict.zh-en
     --vocab zh.vocab.pkl en.vocab.pkl --model nmt --embdim 620 620
     --hidden 1000 1000 1000 --maxhid 500 --deephid 620 --maxpart 2
     --alpha 5e-4 --norm 1.0 --batch 128 --maxepoch 5 --seed 1234
-    --freq 1000 --vfreq 1500 --sfreq 50 --sort 20 --validate nist02.src
-    --ref nist02.ref0 nist02.ref1 nist02.ref2 nist02.ref3
-  ```
+    --freq 1000 --vfreq 1500 --sfreq 50 --sort 20 --validation nist02.src
+    --references nist02.ref0 nist02.ref1 nist02.ref2 nist02.ref3
+```
+* Resume training
+```
+  python rnnsearch.py train --model nmt.autosave.pkl
+```
+* Initialize with a trained model
+```
+  python rnnsearch.py train --model nmt.best.pkl --reset 1
+```
+
 ### Decoding
-* Decoding without UNK replacemnt
 ```
   python rnnsearch.py translate --model nmt.best.pkl < input > translation
 ```
-* Set heuristic and dictionary to enable UNK replacement feature, if heuristic
-  sets to zero, dictinoary is no longer needed
+
+### UNK replacement
 ```
-  python rnnsearch.py translate --model nmt.best.pkl --heuristic 1
-                                --dictionary dict.zh-en < input > translation
+  python rnnsearch.py replace --model nmt.best.pkl --text input translation
+                              --dictionary dict.zh-en > newtranslation
 ```
+
 ### Sampling
 ```
   python rnnsearch.py sample --model nmt.best.pkl < input > examples
-```
-### Resume training
-```
-  python rnnsearch.py train --model nmt.autosave.pkl
 ```
 
 ### Convert Trained Models
@@ -69,5 +74,5 @@ python scripts/convert.py --state search_state.pkl --model search_model.npz
 ### Convert Old Models
 Convert models trained by old versions
 ```
-python scripts/convert_model.py --model nmt.pkl --output nmt.new.pkl
-"""
+python scripts/convert_model.py oldmodel.pkl newmodel.pkl
+```
