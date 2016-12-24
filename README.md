@@ -39,21 +39,19 @@ python scripts/build_dictionary.py zh.txt en.txt align.txt dict.zh-en
     --ref nist02.ref0 nist02.ref1 nist02.ref2 nist02.ref3
   ```
 ### Decoding
+* Decoding without UNK replacemnt
 ```
   python rnnsearch.py translate --model nmt.best.pkl < input > translation
 ```
+* Set heuristic and dictionary to enable UNK replacement feature, if heuristic
+  sets to zero, dictinoary is no longer needed
+```
+  python rnnsearch.py translate --model nmt.best.pkl --heuristic 1
+                                --dictionary dict.zh-en < input > translation
+```
 ### Sampling
-Warning: This feature is not available in current version, but available in
-old version, will be implemented soon
 ```
   python rnnsearch.py sample --model nmt.best.pkl < input > examples
-```
-### UNK replacement
-Warning: This feature is not available in current version, but available in
-old version, will be implemented directly in decoding
-```
-  python rnnsearch.py replace --model nmt.best.pkl --text input translation
-    --dictionary dict.zh-en > newtranslation
 ```
 ### Resume training
 ```
@@ -63,8 +61,13 @@ old version, will be implemented directly in decoding
 ### Convert Trained Models
 Models trained by GroundHog can be converted to our format using convert.py,
 only support RNNsearch architecture
-Warning: This script only worked for old versions
 ```
 python scripts/convert.py --state search_state.pkl --model search_model.npz
                           --output nmt.pkl
 ```
+
+### Convert Old Models
+Convert models trained by old versions
+```
+python scripts/convert_model.py --model nmt.pkl --output nmt.new.pkl
+"""

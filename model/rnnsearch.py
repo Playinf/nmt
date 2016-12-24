@@ -6,6 +6,7 @@ import nn
 import ops
 import numpy
 import theano
+import theano.sandbox.rng_mrg
 
 from search import beam, select_nbest
 
@@ -68,7 +69,7 @@ def attention(query, mapped_states, state_size, attn_size, attention_mask=None,
                                  scope="query_w")
 
         mapped_query = mapped_query[None, :, :]
-        hidden = mapped_query + mapped_states
+        hidden = theano.tensor.tanh(mapped_query + mapped_states)
 
         score = nn.linear(hidden, [attn_size, 1], False, scope="attention_v")
         score = score.reshape([score.shape[0], score.shape[1]])
@@ -99,7 +100,6 @@ def decoder(inputs, mask, initial_state, attention_states, attention_mask,
         next_state = (1.0 - mask[:, None]) * state + mask[:, None] * next_state
 
         return [next_state, context]
-
 
     with ops.variable_scope(scope or "decoder"):
         mapped_states = map_attention_states(attention_states, states_size,
@@ -132,9 +132,32 @@ class rnnsearch:
         # source and target vocabulary size
         svsize, tvsize = len(sid2w), len(tid2w)
 
+        if "scope" not in option or option["scope"] is None:
+            option["scope"] = "rnnsearch"
+
+        if "initializer" not in option or option["initializer"] is None:
+            option["initializer"] = None
+
         dtype = theano.config.floatX
         scope = option["scope"]
         initializer = option["initializer"]
+
+        def prediction(prev_inputs, prev_state, context):
+            features = [prev_state, prev_inputs, context]
+            maxhid = nn.maxout(features, [[thdim, tedim, 2 * shdim], maxdim],
+                               maxpart, True)
+            readout = nn.linear(maxhid, [maxdim, deephid], False,
+                                scope="deepout")
+            logits = nn.linear(readout, [deephid, tvsize], True,
+                               scope="logits")
+
+            if logits.ndim == 3:
+                new_shape = [logits.shape[0] * logits.shape[1], -1]
+                logits = logits.reshape(new_shape)
+
+            probs = theano.tensor.nnet.softmax(logits)
+
+            return probs
 
         # training graph
         with ops.variable_scope(scope, initializer=initializer, dtype=dtype):
@@ -143,12 +166,15 @@ class rnnsearch:
             tgt_seq = theano.tensor.imatrix("target_sequence")
             tgt_mask = theano.tensor.matrix("target_sequence_mask")
 
-            source_embedding = ops.get_variable("source_embedding",
-                                                [svsize, sedim])
-            source_bias = ops.get_variable("source_embedding_bias", [sedim])
-            target_embedding = ops.get_variable("target_embedding",
+            with ops.variable_scope("source_embedding"):
+                source_embedding = ops.get_variable("embedding",
+                                                    [svsize, sedim])
+                source_bias = ops.get_variable("bias", [sedim])
+
+            with ops.variable_scope("target_embedding"):
+                target_embedding = ops.get_variable("embedding",
                                                 [tvsize, tedim])
-            target_bias = ops.get_variable("target_embedding_bias", [tedim])
+                target_bias = ops.get_variable("bias", [tedim])
 
             source_inputs = nn.embedding_lookup(source_embedding, src_seq)
             target_inputs = nn.embedding_lookup(target_embedding, tgt_seq)
@@ -162,9 +188,10 @@ class rnnsearch:
             # compute initial state for decoder
             # first state of backward encoder
             final_state = outputs[1][0]
-            initial_state = nn.feedforward(final_state, [shdim, thdim], True,
-                                           activation=theano.tensor.tanh,
-                                           scope="initial")
+            with ops.variable_scope("decoder"):
+                initial_state = nn.feedforward(final_state, [shdim, thdim],
+                                               True, scope="initial",
+                                               activation=theano.tensor.tanh)
 
             # run decoder
             decoder_outputs = decoder(target_inputs, tgt_mask, initial_state,
@@ -180,18 +207,10 @@ class rnnsearch:
             all_states = theano.tensor.concatenate([init_state, all_output], 0)
             prev_states = all_states[:-1]
 
-            features = [prev_states, shift_inputs, all_context]
-            maxhid = nn.maxout(features, [[thdim, tedim, 2 * shdim], maxdim],
-                               maxpart, True)
-            readout = nn.linear(maxhid, [maxdim, deephid], False,
-                                scope="deepout")
-            logits = nn.linear(readout, [deephid, tvsize], True,
-                               scope="logits")
+            with ops.variable_scope("decoder"):
+                probs = prediction(shift_inputs, prev_states, all_context)
 
-            logits = logits.reshape((logits.shape[0] * logits.shape[1], -1))
-            probs = theano.tensor.nnet.softmax(logits)
-
-            # compute
+            # compute cost
             idx = theano.tensor.arange(tgt_seq.flatten().shape[0])
             cost = -theano.tensor.log(probs[idx, tgt_seq.flatten()])
             cost = cost.reshape(tgt_seq.shape)
@@ -211,16 +230,12 @@ class rnnsearch:
         with ops.variable_scope(scope, reuse=True):
             prev_words = theano.tensor.ivector("prev_words")
 
-            target_embedding = ops.get_variable("target_embedding",
-                                                [tvsize, tedim])
-            target_bias = ops.get_variable("target_embedding_bias", [tedim])
-
-            target_inputs = nn.embedding_lookup(target_embedding, prev_words)
-            target_inputs = target_inputs + target_bias
+            inputs = nn.embedding_lookup(target_embedding, prev_words)
+            inputs = inputs + target_bias
 
             cond = theano.tensor.neq(prev_words, 0)
             # zeros out embedding if y is 0
-            target_inputs = target_inputs * cond[:, None]
+            inputs = inputs * cond[:, None]
 
             cell = nn.rnn_cell.gru_cell([[tedim, 2 * shdim], thdim])
 
@@ -230,17 +245,8 @@ class rnnsearch:
                 alpha = attention(initial_state, mapped_states, thdim, ahdim,
                                   src_mask)
                 context = theano.tensor.sum(alpha * annotation, 0)
-                output, next_state = cell([target_inputs, context],
-                                          initial_state)
-
-            features = [initial_state, target_inputs, context]
-            maxhid = nn.maxout(features, [[thdim, tedim, 2 * shdim], maxdim],
-                               maxpart, True)
-            readout = nn.linear(maxhid, [maxdim, deephid], False,
-                                scope="deepout")
-            logits = nn.linear(readout, [deephid, tvsize], True,
-                               scope="logits")
-            probs = theano.tensor.nnet.softmax(logits)
+                output, next_state = cell([inputs, context], initial_state)
+                probs = prediction(inputs, initial_state, context)
 
         # additional functions for decoding
         precomputation_inputs = [annotation]
@@ -248,9 +254,9 @@ class rnnsearch:
         precompute = theano.function(precomputation_inputs,
                                      precomputation_outputs)
 
-        alignment_inputs = [initial_state, annotation, mapped_states, src_mask]
-        alignment_outputs = [alpha, context]
-        align = theano.function(alignment_inputs, alignment_outputs)
+        inference_inputs = [initial_state, annotation, mapped_states, src_mask]
+        inference_outputs = [alpha, context]
+        infer = theano.function(inference_inputs, inference_outputs)
 
         prediction_inputs = [prev_words, initial_state, context]
         prediction_outputs = probs
@@ -260,11 +266,68 @@ class rnnsearch:
         generation_outputs = next_state
         generate = theano.function(generation_inputs, generation_outputs)
 
+        # sampling graph, this feature is optional
+        with ops.variable_scope(scope, reuse=True):
+            seed = option["seed"]
+            seed_rng = numpy.random.RandomState(numpy.random.randint(seed))
+            tseed = seed_rng.randint(numpy.iinfo(numpy.int32).max)
+            stream = theano.sandbox.rng_mrg.MRG_RandomStreams(tseed)
+
+            max_len = theano.tensor.iscalar()
+
+            def sampling_loop(inputs, state):
+                alpha = attention(state, mapped_states, shdim, ahdim, src_mask)
+                context = theano.tensor.sum(alpha * annotation, 0)
+                probs = prediction(inputs, state, context)
+                next_words = stream.multinomial(pvals=probs).argmax(axis=1)
+                new_inputs = nn.embedding_lookup(target_embedding, next_words)
+                new_inputs = new_inputs + target_bias
+                output, next_state = cell([new_inputs, context], state)
+
+                return [next_words, new_inputs, next_state]
+
+            with ops.variable_scope("decoder"):
+                batch = src_seq.shape[1]
+                initial_inputs = theano.tensor.zeros([batch, tedim],
+                                                     dtype=dtype)
+
+                outputs_info = [None, initial_inputs, initial_state]
+                outputs, updates = theano.scan(sampling_loop, [], outputs_info,
+                                              n_steps=max_len)
+                sampled_words = outputs[0]
+
+        sampling_inputs = [src_seq, src_mask, max_len]
+        sampling_outputs = sampled_words
+        sample = theano.function(sampling_inputs, sampling_outputs,
+                                 updates=updates)
+
+        # attention graph, this feature is optional
+        with ops.variable_scope(scope, reuse=True):
+            def attention_loop(inputs, state):
+                alpha = attention(state, mapped_states, shdim, ahdim, src_mask)
+                context = theano.tensor.sum(alpha * annotation, 0)
+                output, next_state = cell([inputs, context], state)
+
+                return [alpha, state]
+
+            with ops.variable_scope("decoder"):
+                seq = [target_inputs]
+                outputs_info = [None, initial_state]
+                outputs, update = theano.scan(attention_loop, seq,
+                                              outputs_info)
+                attention_score = outputs[0]
+
+        alignment_inputs = [src_seq, src_mask, tgt_seq, tgt_mask]
+        alignment_outputs = attention_score
+        align = theano.function(alignment_inputs, alignment_outputs)
+
         self.cost = cost
         self.inputs = training_inputs
         self.outputs = training_outputs
         self.updates = []
         self.align = align
+        self.infer = infer
+        self.sample = sample
         self.encode = encode
         self.predict = predict
         self.generate = generate
@@ -273,7 +336,7 @@ class rnnsearch:
         self.option = option
 
 
-# TODO: add UNK replacement, add batched decoding
+# TODO: add batched decoding
 def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
                maxlen=None, minlen=None, arithmetic=False, dtype=None):
     size = beamsize
@@ -330,7 +393,7 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
                            [1] * num_models)
 
         # align returns [alpha, context]
-        outputs = [model.align(state, annot, mannot, batch_mask)
+        outputs = [model.infer(state, annot, mannot, batch_mask)
                    for model, state, annot, mannot in
                    zip(models, states, batch_annots, batch_mannots)]
         contexts = [item[1] for item in outputs]
@@ -408,5 +471,37 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
     return output
 
 
-def batchsample(**kwargs):
-    raise NotImplemented("batchsample currently not avaiable")
+def batchsample(model, seq, mask, maxlen=None):
+    sampler = model.sample
+
+    vocabulary = model.option["vocabulary"]
+    eos = model.option["eos"]
+    vocab = vocabulary[1][1]
+    eosid = vocabulary[1][0][eos]
+
+    if maxlen == None:
+        maxlen = int(len(seq) * 1.5)
+
+    words = sampler(seq, mask, maxlen)
+    trans = words.astype("int32")
+
+    samples = []
+
+    for i in range(trans.shape[1]):
+        example = trans[:, i]
+        # remove eos symbol
+        index = -1
+
+        for i in range(len(example)):
+            if example[i] == eosid:
+                index = i
+                break
+
+        if index >= 0:
+            example = example[:index]
+
+        example = map(lambda x: vocab[x], example)
+
+        samples.append(example)
+
+    return samples

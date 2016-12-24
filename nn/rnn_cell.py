@@ -62,7 +62,7 @@ class gru_cell(rnn_cell):
             c = feedforward(new_inputs, size, True,
                             activation=theano.tensor.tanh, scope="candidate")
 
-            new_state = u * state + (1 - u) * c
+            new_state = (1.0 - u) * state + u * c
 
         return new_state, new_state
 

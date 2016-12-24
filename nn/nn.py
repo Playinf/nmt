@@ -15,7 +15,7 @@ def embedding_lookup(params, ids):
     return values
 
 
-# size: (input_size, output_size)
+# size: [input_size, output_size]
 def linear(inputs, size, bias, concat=False, dtype=None, scope=None):
     if not isinstance(size, (list, tuple)):
         raise ValueError("size argument must be (input_size, output_size)")
