@@ -16,6 +16,7 @@ from data import textreader, textiterator
 from data.plain import convert_data, get_length
 from model.rnnsearch import rnnsearch, beamsearch
 from ops import random_uniform_initializer, trainable_variables
+from ops import l1_regularizer, l2_regularizer, sum_regularizer
 
 
 def load_vocab(file):
@@ -207,6 +208,10 @@ def parseargs_train(args):
     parser.add_argument("--stop", type=int, help=msg)
     msg = "decay factor, default 0.5"
     parser.add_argument("--decay", type=float, help=msg)
+    msg = "L1 regularizer scale"
+    parser.add_argument("--l1-scale", type=float, help=msg)
+    msg = "L2 regularizer scale"
+    parser.add_argument("--l2-scale", type=float, help=msg)
 
     # validation
     msg = "random seed, default 1234"
@@ -517,8 +522,21 @@ def train(args):
     epoch = option["epoch"]
     maxepoch = option["maxepoch"]
 
+    regularizer = []
+
+    if args.l1_scale:
+        print "L1 regularizer added, scale: %s" % str(args.l1_scale)
+        regularizer.append(l1_regularizer(args.l1_scale))
+
+    if args.l2_scale:
+        print "L2 regularizer added, scale: %s" % str(args.l2_scale)
+        regularizer.append(l2_regularizer(args.l2_scale))
+
+    regularizer = sum_regularizer(regularizer)
+
     initializer = random_uniform_initializer(-0.08, 0.08)
-    model = rnnsearch(initializer=initializer, **option)
+    model = rnnsearch(initializer=initializer, regularizer=regularizer,
+                      **option)
 
     if not init:
         params = restore_variables(params)
@@ -608,7 +626,8 @@ def train(args):
                 sdata = data[0][ind]
                 tdata = data[1][ind]
                 xdata = xdata[:, ind : ind + 1]
-                hls = beamsearch(model, xdata)
+                xmask = xmask[:, ind : ind + 1]
+                hls = beamsearch(model, xdata, xmask)
                 best, score = hls[0]
                 print sdata
                 print tdata
