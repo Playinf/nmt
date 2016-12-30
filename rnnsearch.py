@@ -481,6 +481,7 @@ def train(args):
 
     if args.initialize:
         params = load_model(args.initialize)
+        params = params[1]
         init = False
 
     override(option, args)

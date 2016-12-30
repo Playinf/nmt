@@ -34,11 +34,7 @@ def gru_encoder(cell, inputs, mask, initial_state=None, dtype=None):
     return states
 
 
-def encoder(inputs, mask, input_size, output_size, initial_state=None,
-            dtype=None, scope=None):
-    size = [input_size, output_size]
-    cell = nn.rnn_cell.gru_cell(size)
-
+def encoder(cell, inputs, mask, initial_state=None, dtype=None, scope=None):
     with ops.variable_scope(scope or "encoder"):
         with ops.variable_scope("forward"):
             fd_states = gru_encoder(cell, inputs, mask, initial_state, dtype)
@@ -84,32 +80,30 @@ def attention(query, mapped_states, state_size, attn_size, attention_mask=None,
     return alpha
 
 
-def decoder(inputs, mask, initial_state, attention_states, attention_mask,
-            input_size, output_size, states_size, attn_size, dtype=None,
-            scope=None):
-    cell = nn.rnn_cell.gru_cell([[input_size, states_size], output_size])
-
+def decoder(cell, inputs, mask, initial_state, attention_states,
+            attention_mask, attn_size, dtype=None, scope=None):
+    input_size, states_size = cell.input_size
     output_size = cell.output_size
     dtype = dtype or inputs.dtype
-
-    def loop_fn(inputs, mask, state, attn_states, attn_mask, mapped_states):
-        mask = mask[:, None]
-        alpha = attention(state, mapped_states, output_size, attn_size,
-                          attn_mask)
-        context = theano.tensor.sum(alpha[:, :, None] * attn_states, 0)
-        output, next_state = cell([inputs, context], state)
-        next_state = (1.0 - mask) * state +  mask * next_state
-
-        return [next_state, context]
 
     with ops.variable_scope(scope or "decoder"):
         mapped_states = map_attention_states(attention_states, states_size,
                                              attn_size)
+
+        def loop_fn(inputs, mask, state):
+            mask = mask[:, None]
+            alpha = attention(state, mapped_states, output_size, attn_size,
+                              attention_mask)
+            context = theano.tensor.sum(alpha[:, :, None] * attention_states,
+                                        0)
+            output, next_state = cell([inputs, context], state)
+            next_state = (1.0 - mask) * state +  mask * next_state
+
+            return [next_state, context]
+
         seq = [inputs, mask]
         outputs_info = [initial_state, None]
-        non_seq = [attention_states, attention_mask, mapped_states]
-        (states, contexts) = ops.scan(loop_fn, seq, outputs_info,
-                                                  non_seq)
+        (states, contexts) = ops.scan(loop_fn, seq, outputs_info)
 
     return states, contexts
 
@@ -188,7 +182,8 @@ class rnnsearch:
             source_inputs = source_inputs + source_bias
             target_inputs = target_inputs + target_bias
 
-            outputs = encoder(source_inputs, src_mask, sedim, shdim)
+            cell = nn.rnn_cell.gru_cell([sedim, shdim])
+            outputs = encoder(cell, source_inputs, src_mask)
             annotation = theano.tensor.concatenate(outputs, 2)
 
             # compute initial state for decoder
@@ -199,10 +194,11 @@ class rnnsearch:
                                                True, scope="initial",
                                                activation=theano.tensor.tanh)
 
+            cell = nn.rnn_cell.gru_cell([[tedim, 2 * shdim], thdim])
             # run decoder
-            decoder_outputs = decoder(target_inputs, tgt_mask, initial_state,
-                                      annotation, src_mask, tedim, thdim,
-                                      2 * shdim, ahdim)
+            decoder_outputs = decoder(cell, target_inputs, tgt_mask,
+                                      initial_state, annotation, src_mask,
+                                      ahdim)
             all_output, all_context = decoder_outputs
 
             shift_inputs = theano.tensor.zeros_like(target_inputs)

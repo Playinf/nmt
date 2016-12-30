@@ -21,6 +21,8 @@ class optimizer:
 
         if "variables" not in option or not option["variables"]:
             params = ops.trainable_variables()
+        else:
+            params = option["variables"]
 
         regularization_loss = ops.get_regularization_loss()
 
@@ -63,7 +65,7 @@ class optimizer:
         if option["norm"]:
             normval = constraint.global_norm(grads)
             outputs = outputs[:]
-            outputs.insert(1, normval)
+            outputs.append(normval)
 
         if option["constraint"]:
             method, value = option["constraint"]
