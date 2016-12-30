@@ -6,7 +6,6 @@ import nn
 import ops
 import numpy
 import theano
-import theano.sandbox.rng_mrg
 
 from search import beam, select_nbest
 
@@ -268,70 +267,11 @@ class rnnsearch:
         generation_outputs = next_state
         generate = theano.function(generation_inputs, generation_outputs)
 
-        # sampling graph, this feature is optional
-        with ops.variable_scope(scope, reuse=True):
-            seed = option["seed"]
-            seed_rng = numpy.random.RandomState(numpy.random.randint(seed))
-            tseed = seed_rng.randint(numpy.iinfo(numpy.int32).max)
-            stream = theano.sandbox.rng_mrg.MRG_RandomStreams(tseed)
-
-            max_len = theano.tensor.iscalar()
-
-            def sampling_loop(inputs, state):
-                alpha = attention(state, mapped_states, shdim, ahdim, src_mask)
-                context = theano.tensor.sum(alpha[:, :, None] * annotation, 0)
-                probs = prediction(inputs, state, context)
-                next_words = stream.multinomial(pvals=probs).argmax(axis=1)
-                new_inputs = nn.embedding_lookup(target_embedding, next_words)
-                new_inputs = new_inputs + target_bias
-                output, next_state = cell([new_inputs, context], state)
-
-                return [next_words, new_inputs, next_state]
-
-            with ops.variable_scope("decoder"):
-                batch = src_seq.shape[1]
-                initial_inputs = theano.tensor.zeros([batch, tedim],
-                                                     dtype=dtype)
-
-                outputs_info = [None, initial_inputs, initial_state]
-                outputs, updates = theano.scan(sampling_loop, [], outputs_info,
-                                              n_steps=max_len)
-                sampled_words = outputs[0]
-
-        sampling_inputs = [src_seq, src_mask, max_len]
-        sampling_outputs = sampled_words
-        sample = theano.function(sampling_inputs, sampling_outputs,
-                                 updates=updates)
-
-        # attention graph, this feature is optional
-        with ops.variable_scope(scope, reuse=True):
-            def attention_loop(inputs, mask, state):
-                mask = mask[:, None]
-                alpha = attention(state, mapped_states, shdim, ahdim, src_mask)
-                context = theano.tensor.sum(alpha[:, :, None] * annotation, 0)
-                output, next_state = cell([inputs, context], state)
-                next_state = (1.0 - mask) * state + mask * next_state
-
-                return [alpha, next_state]
-
-            with ops.variable_scope("decoder"):
-                seq = [target_inputs, tgt_mask]
-                outputs_info = [None, initial_state]
-                outputs, updates = theano.scan(attention_loop, seq,
-                                              outputs_info)
-                attention_score = outputs[0]
-
-        alignment_inputs = [src_seq, src_mask, tgt_seq, tgt_mask]
-        alignment_outputs = attention_score
-        align = theano.function(alignment_inputs, alignment_outputs)
-
         self.cost = cost
         self.inputs = training_inputs
         self.outputs = training_outputs
         self.updates = []
-        self.align = align
         self.infer = infer
-        self.sample = sample
         self.encode = encode
         self.predict = predict
         self.generate = generate
@@ -340,21 +280,15 @@ class rnnsearch:
         self.option = option
 
 
-# TODO: add batched decoding
-def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
-               maxlen=None, minlen=None, arithmetic=False, dtype=None):
+def beamsearch(model, seq, mask=None, beamsize=10, normalize=False,
+               maxlen=None, minlen=None, dtype=None):
     size = beamsize
     dtype = dtype or theano.config.floatX
 
-    if not isinstance(models, (list, tuple)):
-        models = [models]
-
-    num_models = len(models)
-
     # get vocabulary from the first model
-    vocab = models[0].option["vocabulary"][1][1]
-    eosid = models[0].option["eosid"]
-    bosid = models[0].option["bosid"]
+    vocab = model.option["vocabulary"][1][1]
+    eosid = model.option["eosid"]
+    bosid = model.option["bosid"]
 
     if maxlen == None:
         maxlen = seq.shape[0] * 3
@@ -366,11 +300,8 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
     if mask is None:
         mask = numpy.ones(seq.shape, dtype)
 
-    annotations_and_istates = [model.encode(seq, mask) for model in models]
-    annotations = [item[0] for item in annotations_and_istates]
-    states = [item[1] for item in annotations_and_istates]
-    mapped_annots = [model.precompute(annot) for annot, model in
-                     zip(annotations, models)]
+    annotation, states = model.encode(seq, mask)
+    mapped_annot = model.precompute(annotation)
 
     initial_beam = beam(size)
     # bosid must be 0
@@ -390,26 +321,16 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
 
         # compute context first, then compute word distribution
         batch_mask = numpy.repeat(mask, num, 1)
-        batch_annots = map(numpy.repeat, annotations, [num] * num_models,
-                           [1] * num_models)
-        batch_mannots = map(numpy.repeat, mapped_annots, [num] * num_models,
-                           [1] * num_models)
+        batch_annot = numpy.repeat(annotation, num, 1,)
+        batch_mannot = numpy.repeat(mapped_annot, num, 1)
 
         # align returns [alpha, context]
-        outputs = [model.infer(state, annot, mannot, batch_mask)
-                   for model, state, annot, mannot in
-                   zip(models, states, batch_annots, batch_mannots)]
-        contexts = [item[1] for item in outputs]
-        prob_dists = [model.predict(last_words, state, context) for
-                      model, state, context in zip(models, states, contexts)]
+        alpha, contexts = model.infer(states, batch_annot, batch_mannot,
+                                     batch_mask)
+        prob_dists = model.predict(last_words, states, contexts)
+        logprobs = numpy.log(prob_dists)
 
-        # search nbest given word distribution
-        if arithmetic:
-            logprobs = numpy.log(sum(prob_dists) / num_models)
-        else:
-            # geometric mean
-            logprobs = sum(numpy.log(prob_dists)) / num_models
-
+        # do not generate eos symbol
         if k < minlen:
             logprobs[:, eosid] = -numpy.inf
 
@@ -438,9 +359,7 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
 
         states = select_nbest(states, batch_indices)
         contexts = select_nbest(contexts, batch_indices)
-
-        states = [model.generate(last_words, state, context)
-                  for model, state, context in zip(models, states, contexts)]
+        states = model.generate(last_words, states, contexts)
 
         beam_list.append(next_beam)
 
@@ -472,39 +391,3 @@ def beamsearch(models, seq, mask=None, beamsize=10, normalize=False,
         output.append((trans, score))
 
     return output
-
-
-def batchsample(model, seq, mask, maxlen=None):
-    sampler = model.sample
-
-    vocabulary = model.option["vocabulary"]
-    eos = model.option["eos"]
-    vocab = vocabulary[1][1]
-    eosid = vocabulary[1][0][eos]
-
-    if maxlen == None:
-        maxlen = int(len(seq) * 1.5)
-
-    words = sampler(seq, mask, maxlen)
-    trans = words.astype("int32")
-
-    samples = []
-
-    for i in range(trans.shape[1]):
-        example = trans[:, i]
-        # remove eos symbol
-        index = -1
-
-        for i in range(len(example)):
-            if example[i] == eosid:
-                index = i
-                break
-
-        if index >= 0:
-            example = example[:index]
-
-        example = map(lambda x: vocab[x], example)
-
-        samples.append(example)
-
-    return samples
