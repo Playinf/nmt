@@ -86,24 +86,23 @@ def decoder(cell, inputs, mask, initial_state, attention_states,
     output_size = cell.output_size
     dtype = dtype or inputs.dtype
 
+    # non sequences should passed to scan, DO NOT use closure
+    def loop_fn(inputs, mask, state, attn_states, attn_mask, m_states):
+        mask = mask[:, None]
+        alpha = attention(state, m_states, output_size, attn_size, attn_mask)
+        context = theano.tensor.sum(alpha[:, :, None] * attn_states, 0)
+        output, next_state = cell([inputs, context], state)
+        next_state = (1.0 - mask) * state +  mask * next_state
+
+        return [next_state, context]
+
     with ops.variable_scope(scope or "decoder"):
         mapped_states = map_attention_states(attention_states, states_size,
                                              attn_size)
-
-        def loop_fn(inputs, mask, state):
-            mask = mask[:, None]
-            alpha = attention(state, mapped_states, output_size, attn_size,
-                              attention_mask)
-            context = theano.tensor.sum(alpha[:, :, None] * attention_states,
-                                        0)
-            output, next_state = cell([inputs, context], state)
-            next_state = (1.0 - mask) * state +  mask * next_state
-
-            return [next_state, context]
-
         seq = [inputs, mask]
         outputs_info = [initial_state, None]
-        (states, contexts) = ops.scan(loop_fn, seq, outputs_info)
+        non_seq = [attention_states, attention_mask, mapped_states]
+        (states, contexts) = ops.scan(loop_fn, seq, outputs_info, non_seq)
 
     return states, contexts
 
