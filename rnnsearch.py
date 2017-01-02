@@ -218,6 +218,8 @@ def parseargs_train(args):
     parser.add_argument("--stop", type=int, help=msg)
     msg = "decay factor, default 0.5"
     parser.add_argument("--decay", type=float, help=msg)
+    msg = "initialization scale, default 0.08"
+    parser.add_argument("--scale", type=float, help=msg)
     msg = "L1 regularizer scale"
     parser.add_argument("--l1-scale", type=float, help=msg)
     msg = "L2 regularizer scale"
@@ -264,8 +266,8 @@ def parseargs_train(args):
     parser.add_argument("--finetune", action="store_true", help=msg)
     msg = "reset count"
     parser.add_argument("--reset", action="store_true", help=msg)
-    return parser.parse_args(args)
 
+    return parser.parse_args(args)
 
 def parseargs_decode(args):
     msg = "translate using exsiting nmt model"
@@ -286,6 +288,7 @@ def parseargs_decode(args):
     return parser.parse_args(args)
 
 
+# default options
 # default options
 def default_option():
     option = {}
@@ -309,6 +312,9 @@ def default_option():
     option["norm"] = 1.0
     option["stop"] = 0
     option["decay"] = 0.5
+    option["scale"] = 0.08
+    option["l1_scale"] = None
+    option["l2_scale"] = None
 
     # runtime information
     option["cost"] = 0.0
@@ -341,35 +347,43 @@ def default_option():
     return option
 
 
-def override_if_not_none(option, args, key):
-    value = args.__dict__[key]
-    option[key] = value if value != None else option[key]
+def args_to_dict(args):
+    return args.__dict__
+
+
+def override_if_not_none(opt1, opt2, key):
+    if key in opt2:
+        value = opt2[key]
+    else:
+        value = None
+
+    opt1[key] = value if value != None else opt1[key]
 
 
 # override default options
 def override(option, args):
 
     # training corpus
-    if args.corpus == None and option["corpus"] == None:
+    if args["corpus"] == None and option["corpus"] == None:
         raise ValueError("error: no training corpus specified")
 
     # vocabulary
-    if args.vocab == None and option["vocab"] == None:
+    if args["vocab"] == None and option["vocab"] == None:
         raise ValueError("error: no training vocabulary specified")
 
-    if args.limit and len(args.limit) > 2:
+    if args["limit"] and len(args["limit"]) > 2:
         raise ValueError("error: invalid number of --limit argument (<=2)")
 
-    if args.limit and len(args.limit) == 1:
-        args.limit = args.limit * 2
+    if args["limit"] and len(args["limit"]) == 1:
+        args["limit"] = args["limit"] * 2
 
     override_if_not_none(option, args, "corpus")
 
     # vocabulary and model paramters cannot be overrided
     if option["vocab"] == None:
-        option["vocab"] = args.vocab
-        svocab = load_vocab(args.vocab[0])
-        tvocab = load_vocab(args.vocab[1])
+        option["vocab"] = args["vocab"]
+        svocab = load_vocab(args["vocab"][0])
+        tvocab = load_vocab(args["vocab"][1])
         isvocab = invert_vocab(svocab)
         itvocab = invert_vocab(tvocab)
 
@@ -403,17 +417,26 @@ def override(option, args):
     override_if_not_none(option, args, "norm")
     override_if_not_none(option, args, "stop")
     override_if_not_none(option, args, "decay")
+    override_if_not_none(option, args, "scale")
+    override_if_not_none(option, args, "l1_scale")
+    override_if_not_none(option, args, "l2_scale")
 
     # runtime information
-    override_if_not_none(option, args, "validation")
-    override_if_not_none(option, args, "references")
+    override_if_not_none(option, args, "cost")
+    override_if_not_none(option, args, "count")
+    override_if_not_none(option, args, "epoch")
+    override_if_not_none(option, args, "maxepoch")
+    override_if_not_none(option, args, "sort")
+    override_if_not_none(option, args, "shuffle")
+    override_if_not_none(option, args, "limit")
     override_if_not_none(option, args, "freq")
     override_if_not_none(option, args, "vfreq")
     override_if_not_none(option, args, "sfreq")
     override_if_not_none(option, args, "seed")
-    override_if_not_none(option, args, "sort")
-    override_if_not_none(option, args, "shuffle")
-    override_if_not_none(option, args, "limit")
+    override_if_not_none(option, args, "validation")
+    override_if_not_none(option, args, "references")
+    override_if_not_none(option, args, "bleu")
+    override_if_not_none(option, args, "indices")
 
     # beamsearch
     override_if_not_none(option, args, "beamsize")
@@ -447,6 +470,9 @@ def print_option(option):
     print "norm:", option["norm"]
     print "stop:", option["stop"]
     print "decay:", option["decay"]
+    print "scale:", option["scale"]
+    print "L1-scale:", option["l1_scale"]
+    print "L2-scale:", option["l2_scale"]
 
     print "validation:", option["validation"]
     print "references:", option["references"]
@@ -489,7 +515,8 @@ def train(args):
 
     # load models
     if os.path.exists(args.model):
-        option, params = load_model(args.model)
+        opt, params = load_model(args.model)
+        override(option, opt)
         init = False
     else:
         init = True
@@ -501,7 +528,7 @@ def train(args):
     else:
         restore = False
 
-    override(option, args)
+    override(option, args_to_dict(args))
     print_option(option)
 
     # load references
@@ -534,17 +561,14 @@ def train(args):
     # create model
     regularizer = []
 
-    if args.l1_scale:
-        print "L1 regularizer added, scale: %s" % str(args.l1_scale)
-        regularizer.append(l1_regularizer(args.l1_scale))
+    if option["l1_scale"]:
+        regularizer.append(l1_regularizer(option["l1_scale"]))
 
-    if args.l2_scale:
-        print "L2 regularizer added, scale: %s" % str(args.l2_scale)
-        regularizer.append(l2_regularizer(args.l2_scale))
+    if option["l2_scale"]:
+        regularizer.append(l2_regularizer(option["l2_scale"]))
 
+    initializer = random_uniform_initializer(-option["scale"], option["scale"])
     regularizer = sum_regularizer(regularizer)
-
-    initializer = random_uniform_initializer(-0.08, 0.08)
     # set seed
     numpy.random.seed(option["seed"])
     model = rnnsearch(initializer=initializer, regularizer=regularizer,
@@ -613,14 +637,6 @@ def train(args):
             cost = cost * ymask.shape[1] / ymask.sum()
             totcost += cost / math.log(2)
             print i + 1, count, cost, norm, t2 - t1
-
-            # autosave
-            if count % option["freq"] == 0:
-                option["indices"] = reader.get_indices()
-                option["bleu"] = best_score
-                option["cost"] = totcost
-                option["count"] = [count, reader.count]
-                serialize(autoname, option)
 
             # autosave
             if count % option["freq"] == 0:
