@@ -1,6 +1,7 @@
 # RNNsearch
-An implementation of RNNsearch using Theano, the implementation is the same
-with [GroundHog](https://github.com/lisa-groundhog/GroundHog)
+An implementation of RNNsearch using Theano, the implementation is identical to
+[GroundHog](https://github.com/lisa-groundhog/GroundHog). A full version can be
+found at here(https://github.com/XMUNLP/RNNsearch).
 
 ## Usage
 
