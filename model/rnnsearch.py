@@ -135,17 +135,25 @@ class rnnsearch:
         if "regularizer" not in option:
             option["regularizer"] = None
 
+        if "keep_prob" not in option:
+            option["keep_prob"] = 1.0
+
         dtype = theano.config.floatX
         scope = option["scope"]
         initializer = option["initializer"]
         regularizer = option["regularizer"]
+        keep_prob = option["keep_prob "] or 1.0
 
-        def prediction(prev_inputs, prev_state, context):
+        def prediction(prev_inputs, prev_state, context, keep_prob=1.0):
             features = [prev_state, prev_inputs, context]
             maxhid = nn.maxout(features, [[thdim, tedim, 2 * shdim], maxdim],
                                maxpart, True)
             readout = nn.linear(maxhid, [maxdim, deephid], False,
                                 scope="deepout")
+
+            if keep_prob < 1.0:
+                readout = nn.dropout(readout, keep_prob=keep_prob)
+
             logits = nn.linear(readout, [deephid, tvsize], True,
                                scope="logits")
 
@@ -181,7 +189,15 @@ class rnnsearch:
             source_inputs = source_inputs + source_bias
             target_inputs = target_inputs + target_bias
 
+            if keep_prob < 1.0:
+                source_inputs = nn.dropout(source_inputs, keep_prob=keep_prob)
+                target_inputs = nn.dropout(target_inputs, keep_prob=keep_prob)
+
             cell = nn.rnn_cell.gru_cell([sedim, shdim])
+
+            if keep_prob < 1.0:
+                cell = nn.rnn_cell.dropout_wrapper(cell)
+
             outputs = encoder(cell, source_inputs, src_mask)
             annotation = theano.tensor.concatenate(outputs, 2)
 
@@ -194,6 +210,10 @@ class rnnsearch:
                                                activation=theano.tensor.tanh)
 
             cell = nn.rnn_cell.gru_cell([[tedim, 2 * shdim], thdim])
+
+            if keep_prob < 1.0:
+                cell = nn.rnn_cell.dropout_wrapper(cell)
+
             # run decoder
             decoder_outputs = decoder(cell, target_inputs, tgt_mask,
                                       initial_state, annotation, src_mask,
@@ -209,7 +229,8 @@ class rnnsearch:
             prev_states = all_states[:-1]
 
             with ops.variable_scope("decoder"):
-                probs = prediction(shift_inputs, prev_states, all_context)
+                probs = prediction(shift_inputs, prev_states, all_context,
+                                   keep_prob=keep_prob)
 
             # compute cost
             idx = theano.tensor.arange(tgt_seq.flatten().shape[0])
@@ -220,16 +241,25 @@ class rnnsearch:
 
         training_inputs = [src_seq, src_mask, tgt_seq, tgt_mask]
         training_outputs = [cost]
-        evaluate = theano.function(training_inputs, training_outputs)
-
-        # encoding
-        encoding_inputs = [src_seq, src_mask]
-        encoding_outputs = [annotation, initial_state]
-        encode = theano.function(encoding_inputs, encoding_outputs)
 
         # decoding graph
         with ops.variable_scope(scope, reuse=True):
             prev_words = theano.tensor.ivector("prev_words")
+
+            # encoder, disable dropout
+            source_inputs = nn.embedding_lookup(source_embedding, src_seq)
+            source_inputs = source_inputs + source_bias
+
+            cell = nn.rnn_cell.gru_cell([sedim, shdim])
+            outputs = encoder(cell, source_inputs, src_mask)
+            annotation = theano.tensor.concatenate(outputs, 2)
+
+            # decoder
+            final_state = outputs[1][0]
+            with ops.variable_scope("decoder"):
+                initial_state = nn.feedforward(final_state, [shdim, thdim],
+                                               True, scope="initial",
+                                               activation=theano.tensor.tanh)
 
             inputs = nn.embedding_lookup(target_embedding, prev_words)
             inputs = inputs + target_bias
@@ -249,18 +279,14 @@ class rnnsearch:
                 output, next_state = cell([inputs, context], initial_state)
                 probs = prediction(inputs, initial_state, context)
 
-        # additional functions for decoding
-        precomputation_inputs = [annotation]
-        precomputation_outputs = mapped_states
-        precompute = theano.function(precomputation_inputs,
-                                     precomputation_outputs)
+        # encoding
+        encoding_inputs = [src_seq, src_mask]
+        encoding_outputs = [annotation, initial_state, mapped_states]
+        encode = theano.function(encoding_inputs, encoding_outputs)
 
-        inference_inputs = [initial_state, annotation, mapped_states, src_mask]
-        inference_outputs = [alpha, context]
-        infer = theano.function(inference_inputs, inference_outputs)
-
-        prediction_inputs = [prev_words, initial_state, context]
-        prediction_outputs = probs
+        prediction_inputs = [prev_words, initial_state, annotation,
+                             mapped_states, src_mask]
+        prediction_outputs = [probs, context, alpha]
         predict = theano.function(prediction_inputs, prediction_outputs)
 
         generation_inputs = [prev_words, initial_state, context]
@@ -270,12 +296,9 @@ class rnnsearch:
         self.cost = cost
         self.inputs = training_inputs
         self.outputs = training_outputs
-        self.infer = infer
         self.encode = encode
         self.predict = predict
         self.generate = generate
-        self.evaluate = evaluate
-        self.precompute = precompute
         self.option = option
 
 
@@ -299,8 +322,7 @@ def beamsearch(model, seq, mask=None, beamsize=10, normalize=False,
     if mask is None:
         mask = numpy.ones(seq.shape, dtype)
 
-    annotation, states = model.encode(seq, mask)
-    mapped_annot = model.precompute(annotation)
+    annotation, states, mapped_annot = model.encode(seq, mask)
 
     initial_beam = beam(size)
     # bosid must be 0
@@ -320,13 +342,14 @@ def beamsearch(model, seq, mask=None, beamsize=10, normalize=False,
 
         # compute context first, then compute word distribution
         batch_mask = numpy.repeat(mask, num, 1)
-        batch_annot = numpy.repeat(annotation, num, 1,)
+        batch_annot = numpy.repeat(annotation, num, 1)
         batch_mannot = numpy.repeat(mapped_annot, num, 1)
 
-        # align returns [alpha, context]
         alpha, contexts = model.infer(states, batch_annot, batch_mannot,
-                                     batch_mask)
-        prob_dists = model.predict(last_words, states, contexts)
+                                      batch_mask)
+        outputs = model.predict(last_words, states, batch_annot,
+                                batch_mannot, batch_mask)
+        prob_dists, contexts, alpha = outputs
         logprobs = numpy.log(prob_dists)
 
         # do not generate eos symbol
