@@ -142,7 +142,7 @@ class rnnsearch:
         scope = option["scope"]
         initializer = option["initializer"]
         regularizer = option["regularizer"]
-        keep_prob = option["keep_prob "] or 1.0
+        keep_prob = option["keep_prob"] or 1.0
 
         def prediction(prev_inputs, prev_state, context, keep_prob=1.0):
             features = [prev_state, prev_inputs, context]
@@ -345,10 +345,8 @@ def beamsearch(model, seq, mask=None, beamsize=10, normalize=False,
         batch_annot = numpy.repeat(annotation, num, 1)
         batch_mannot = numpy.repeat(mapped_annot, num, 1)
 
-        alpha, contexts = model.infer(states, batch_annot, batch_mannot,
-                                      batch_mask)
-        outputs = model.predict(last_words, states, batch_annot,
-                                batch_mannot, batch_mask)
+        outputs = model.predict(last_words, states, batch_annot, batch_mannot,
+                                batch_mask)
         prob_dists, contexts, alpha = outputs
         logprobs = numpy.log(prob_dists)
 
