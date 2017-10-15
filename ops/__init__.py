@@ -7,13 +7,14 @@ import random
 from function import function
 from scan import scan, get_updates, merge_updates
 from variable import variable, global_variables, trainable_variables
-from variable_scope import variable_scope, get_variable_scope, get_variable
+from variable_scope import variable_scope, get_variable_scope
 from initializer import zeros_initializer, ones_initializer
 from initializer import constant_initializer, random_uniform_initializer
 from initializer import uniform_unit_scaling_initializer
 from initializer import random_normal_initializer, orthogonal_initializer
 from regularizer import l1_regularizer, l2_regularizer, sum_regularizer
 from regularizer import apply_regularization, get_regularization_loss
+from variable_scope_wrapper import set_mask, get_variable
 
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "l2_regularizer",
     "sum_regularizer",
     "apply_regularization",
-    "get_regularization_loss"
+    "get_regularization_loss",
+    "set_mask"
 ]

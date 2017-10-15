@@ -2,6 +2,9 @@
 An implementation of RNNsearch using Theano, the implementation is identical
 to [GroundHog](https://github.com/lisa-groundhog/GroundHog).
 
+## Note
+This repository is deprecated. See [RNNsearch](https://github.com/XMUNLP/RNNsearch)
+
 ## Usage
 
 ### Data Preprocessing

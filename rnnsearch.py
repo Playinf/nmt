@@ -347,6 +347,8 @@ def default_option():
     option["unk"] = "UNK"
     option["eos"] = "<eos>"
 
+    option["mask"] = {}
+
     return option
 
 
@@ -447,6 +449,7 @@ def override(option, args):
     override_if_not_none(option, args, "normalize")
     override_if_not_none(option, args, "maxlen")
     override_if_not_none(option, args, "minlen")
+    override_if_not_none(option, args, "mask")
 
 
 def print_option(option):
@@ -544,6 +547,10 @@ def train(args):
 
     if args.no_validation:
         references = None
+
+    if "mask" in option:
+        print "mask set"
+        ops.set_mask(option["mask"])
 
     # input corpus
     batch = option["batch"]

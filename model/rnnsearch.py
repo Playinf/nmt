@@ -11,8 +11,8 @@ from search import beam, select_nbest
 
 
 def gru_encoder(cell, inputs, mask, initial_state=None, dtype=None):
-    if not isinstance(cell, nn.rnn_cell.gru_cell):
-        raise ValueError("only gru_cell is supported")
+    #if not isinstance(cell, nn.rnn_cell.gru_cell):
+    #    raise ValueError("only gru_cell is supported")
 
     if isinstance(inputs, (list, tuple)):
         raise ValueError("inputs must be a tensor, not list or tuple")
